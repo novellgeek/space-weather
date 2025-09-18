@@ -7,7 +7,7 @@ from fpdf import FPDF
 # --- BOM SpaceWeather Wrapper ---
 from pyspaceweather import SpaceWeather  # Ensure pyspaceweather.py is in your directory!
 
-BOM_API_KEY = "51585962-2fdd-4cf5-9d9e-74cdd09e3bab"
+BOM_API_KEY = "BOM KEY"
 bom = SpaceWeather(BOM_API_KEY)
 
 st.set_page_config(page_title="Space Weather (NOAA + BOM Aurora)", layout="wide")
@@ -242,5 +242,6 @@ st.markdown("""
         All times UTC. NOAA data live, BOM aurora alerts supplement. Dashboard refreshed on load.
     </div>
 """, unsafe_allow_html=True)
+
 
 pdf_download_button(noaa_discussion, past, current, forecast, forecast_dates, bom_aurora)
