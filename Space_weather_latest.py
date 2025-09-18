@@ -538,4 +538,7 @@ st.caption(f"Server time: {last_server}  •  Refresh page to update feeds.")
 
 
 
+
 ##51585962-2fdd-4cf5-9d9e-74cdd09e3bab##
+
+##windows powershell: $env:BOM_API_KEY="51585962-2fdd-4cf5-9d9e-74cdd09e3bab"##
