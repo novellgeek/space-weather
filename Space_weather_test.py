@@ -22,6 +22,12 @@ except Exception as e:
     BOM_ERR = f"pyspaceweather unavailable: {e}"
 
 BOM_API_KEY = os.getenv("BOM_API_KEY", "").strip()
+
+# --- DEVELOPMENT ONLY: Hardcoded BOM key ---
+if not BOM_API_KEY:
+    BOM_API_KEY = "ADD BOM Key here"  # TODO: Replace with your BOM API key for local dev
+# -------------------------------------------
+
 if HAVE_BOM and BOM_API_KEY:
     try:
         bom = SpaceWeather(BOM_API_KEY)
@@ -162,8 +168,8 @@ def get_noaa_rsg_now_and_past():
 def get_noaa_forecast_text():
     urls = [
         "https://services.swpc.noaa.gov/text/discussion.txt",
-        "https://services.swpc.noaa.gov/text/forecast-discussion.txt",
-        "https://services.swpc.noaa.gov/text/3-day-forecast.txt",
+        #"https://services.swpc.noaa.gov/text/forecast-discussion.txt",
+        #"https://services.swpc.noaa.gov/text/3-day-forecast.txt",
     ]
     for url in urls:
         try:
@@ -270,7 +276,6 @@ def parse_three_day_for_next24(txt: str):
     }
 
 @st.cache_data(ttl=600, show_spinner=False)
-
 def get_next24_summary():
     try:
         txt = fetch_text("https://services.swpc.noaa.gov/text/3-day-forecast.txt")
@@ -647,3 +652,6 @@ with tab_help:
 
 # ========== Footer ==========
 st.caption(f"Server time: {last_updated()}  •  Refresh page to update feeds.")
+
+
+#51585962-2fdd-4cf5-9d9e-74cdd09e3bab
