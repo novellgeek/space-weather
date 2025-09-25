@@ -27,7 +27,7 @@ BOM_API_KEY = os.getenv("BOM_API_KEY", "").strip()
 
 # --- DEVELOPMENT ONLY: Hardcoded BOM key ---
 if not BOM_API_KEY:
-    BOM_API_KEY = "Insert API key"  # TODO: Replace with your BOM API key for local dev
+    BOM_API_KEY = "51585962-2fdd-4cf5-9d9e-74cdd09e3bab"  # TODO: Replace with your BOM API key for local dev
 # -------------------------------------------
 
 if HAVE_BOM and BOM_API_KEY:
@@ -751,10 +751,18 @@ with tab_forecast:
 
 # ========== Aurora Tab ==========
 with tab_aurora:
-    st.markdown("## Aurora Outlook (BOM)")
     bom_aurora_text = get_bom_aurora()
-    st.markdown(f"<pre>{bom_aurora_text}</pre>", unsafe_allow_html=True)
-    st.caption(f"Last updated: {last_updated()}")
+    st.markdown(f"""
+    <div class='section' role='region' aria-label='NOAA Forecast Discussion'>
+        <div class='subttl'>NOAA Forecast Discussion
+        <span style="opacity:.7;font-size:.9em;">({src_note})</span>
+        </div>
+        <div style='margin-top:.6rem;'>{content_html}</div>
+        <hr style='border-color:rgba(139,233,253,.18)'>
+        <div class='subttl'>BOM Aurora</div>
+        <div style='white-space:pre-line;color:#cfe3ff;margin-top:.5rem;'>{bom_aurora_text}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ========== Expert Data Tab (Charts) ==========
 with tab_expert:
