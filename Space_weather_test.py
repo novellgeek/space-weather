@@ -31,7 +31,7 @@ except Exception as e:
 BOM_API_KEY = os.getenv("BOM_API_KEY", "").strip()
 # --- DEVELOPMENT ONLY: Hardcoded BOM key (replace in prod) ---
 if not BOM_API_KEY:
-    BOM_API_KEY = "51585962-2fdd-4cf5-9d9e-74cdd09e3bab"  # TODO: replace for your environment
+    BOM_API_KEY = "enert bom api"  # TODO: replace for your environment
 # -------------------------------------------------------------
 
 if HAVE_BOM and BOM_API_KEY:
@@ -1427,3 +1427,5 @@ with tab_help:
 
 # ========== Footer ==========
 st.caption(f"Server time: {last_updated()}  •  Refresh page to update feeds.")
+
+#51585962-2fdd-4cf5-9d9e-74cdd09e3bab
