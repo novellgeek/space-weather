@@ -6,6 +6,8 @@ from datetime import datetime
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import numpy as np
+from scipy.ndimage import uniform_filter1d
 from fpdf import FPDF
 from streamlit.components.v1 import html
 
@@ -25,7 +27,7 @@ BOM_API_KEY = os.getenv("BOM_API_KEY", "").strip()
 
 # --- DEVELOPMENT ONLY: Hardcoded BOM key ---
 if not BOM_API_KEY:
-    BOM_API_KEY = "ADD BOM Key here"  # TODO: Replace with your BOM API key for local dev
+    BOM_API_KEY = "Insert API key"  # TODO: Replace with your BOM API key for local dev
 # -------------------------------------------
 
 if HAVE_BOM and BOM_API_KEY:
@@ -168,8 +170,8 @@ def get_noaa_rsg_now_and_past():
 def get_noaa_forecast_text():
     urls = [
         "https://services.swpc.noaa.gov/text/discussion.txt",
-        #"https://services.swpc.noaa.gov/text/forecast-discussion.txt",
-        #"https://services.swpc.noaa.gov/text/3-day-forecast.txt",
+       # "https://services.swpc.noaa.gov/text/forecast-discussion.txt",
+        "https://services.swpc.noaa.gov/text/3-day-forecast.txt",
     ]
     for url in urls:
         try:
@@ -477,71 +479,240 @@ with tab_overview:
         badge(current['g'], current['lvl_g'], f"G scale now {current['g']}") +
         "</div>", unsafe_allow_html=True)
 
+
+
 # ========== Charts Tab ==========
 with tab_charts:
-    st.markdown("## Recent Space Weather Trends")
-    # Fetch data series
-    with st.spinner("Loading charts..."):
-        # Solar X-ray
-        x_time, x_vals = [], []
-        try:
-            xr_series = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/xray-flares-latest.json")
-            for row in xr_series[-24:]:
-                x_time.append(row.get("time_tag")); x_vals.append(clamp_float(row.get("flux", 0)))
-        except Exception: pass
+    st.markdown("## Space Weather Analytics (Two Columns)")
 
-        fig = None
-        if x_time:
+    time_ranges = {
+        "Last 6h": 6*12,       # assuming 5 min intervals
+        "Last 24h": 24*12,
+        "Full record": None
+    }
+    selected_range = st.selectbox("Select time range", list(time_ranges.keys()))
+    smooth = st.checkbox("Apply 1-hour moving average", value=True)
+
+    def stats_block(times, vals, label, threshold=None):
+        if vals is None or len(vals) == 0:
+            return ""
+        arr = np.array(vals)
+        current = arr[-1]
+        avg = np.mean(arr)
+        std = np.std(arr)
+        minv = np.min(arr)
+        maxv = np.max(arr)
+        trend = "↗️ rising" if arr[-1] > arr[0] else ("↘️ falling" if arr[-1] < arr[0] else "⏸️ flat")
+        alert = ""
+        if threshold is not None and current > threshold:
+            alert = f"**ALERT: {label} above threshold ({threshold})!**"
+        st.markdown(f"""
+        **{label} Stats:**  
+        - Current: `{current:.2e}`  
+        - Mean: `{avg:.2e}`  
+        - Std Dev: `{std:.2e}`  
+        - Min: `{minv:.2e}`  
+        - Max: `{maxv:.2e}`  
+        - Trend: {trend}  
+        {alert}
+        """)
+
+    col1, col2 = st.columns(2)
+
+    # ------------- COLUMN 1 -------------
+    with col1:
+        # Differential Electrons (1-day)
+        st.markdown("### Differential Electrons (1-day)")
+        url = "https://services.swpc.noaa.gov/json/goes/primary/differential-electrons-1-day.json"
+        data = fetch_json(url)
+        if data and isinstance(data, list):
+            times = [row.get("time_tag") for row in data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in data]
+            if time_ranges[selected_range]:
+                times = times[-time_ranges[selected_range]:]
+                fluxes = fluxes[-time_ranges[selected_range]:]
+            if smooth and len(fluxes) > 12:
+                fluxes = uniform_filter1d(fluxes, size=12)
+            stats_block(times, fluxes, "Differential Electrons", threshold=None)
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=x_time, y=x_vals, mode="lines", name="X-ray Flux"))
-            fig.update_layout(margin=dict(l=10,r=10,t=10,b=10), height=220,
-                              paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                              xaxis=dict(showgrid=False, color="#9fc8ff"),
-                              yaxis=dict(showgrid=True, gridcolor="rgba(160,190,255,.15)", color="#9fc8ff"))
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Electron Flux"))
+            fig.update_layout(title="Differential Electrons (1-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True, key="differential_electrons")
         else:
-            st.caption("No X-ray series available.")
+            st.caption("No electron data available.")
 
-        # Solar Proton
-        p_time, p_vals = [], []
-        try:
-            pr_series = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/proton-flux-1-day.json")
-            for row in pr_series:
-                p_time.append(row.get("time_tag")); p_vals.append(clamp_float(row.get("flux", 0)))
-        except Exception: pass
-
-        fig2 = None
-        if p_time:
-            fig2 = go.Figure()
-            fig2.add_trace(go.Scatter(x=p_time, y=p_vals, mode="lines", name="Proton Flux"))
-            fig2.update_layout(margin=dict(l=10,r=10,t=10,b=10), height=220,
-                              paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                              xaxis=dict(showgrid=False, color="#9fc8ff"),
-                              yaxis=dict(type="log", showgrid=True, gridcolor="rgba(160,190,255,.15)", color="#9fc8ff"))
-            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+        # Differential Protons (1-day)
+        st.markdown("### Differential Protons (1-day)")
+        url = "https://services.swpc.noaa.gov/json/goes/primary/differential-protons-1-day.json"
+        data = fetch_json(url)
+        if data and isinstance(data, list):
+            times = [row.get("time_tag") for row in data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in data]
+            if time_ranges[selected_range]:
+                times = times[-time_ranges[selected_range]:]
+                fluxes = fluxes[-time_ranges[selected_range]:]
+            if smooth and len(fluxes) > 12:
+                fluxes = uniform_filter1d(fluxes, size=12)
+            stats_block(times, fluxes, "Differential Protons", threshold=None)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Proton Flux"))
+            fig.update_layout(title="Differential Protons (1-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True, key="differential_protons")
         else:
-            st.caption("No proton series available.")
+            st.caption("No proton data available.")
 
-        # KP Index
-        kp_time, kp_vals = [], []
-        try:
-            kp_series = fetch_json("https://services.swpc.noaa.gov/json/planetary_k_index_1m.json")
-            tail = kp_series[-1000:] if len(kp_series) > 1000 else kp_series
-            for row in tail:
-                kp_time.append(row.get("time_tag")); kp_vals.append(clamp_float(row.get("kp_index", 0)))
-        except Exception: pass
-
-        fig3 = None
-        if kp_time:
-            fig3 = go.Figure()
-            fig3.add_trace(go.Bar(x=kp_time, y=kp_vals, name="Kp"))
-            fig3.update_layout(margin=dict(l=10,r=10,t=10,b=10), height=220,
-                               paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                               xaxis=dict(showgrid=False, color="#9fc8ff"),
-                               yaxis=dict(range=[0,9], showgrid=True, gridcolor="rgba(160,190,255,.15)", color="#9fc8ff"))
-            st.plotly_chart(fig3, use_container_width=True, config={"displayModeBar": False})
+        # Integral Electrons (1-day)
+        st.markdown("### Integral Electrons (1-day)")
+        url = "https://services.swpc.noaa.gov/json/goes/primary/integral-electrons-1-day.json"
+        data = fetch_json(url)
+        if data and isinstance(data, list):
+            times = [row.get("time_tag") for row in data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in data]
+            if time_ranges[selected_range]:
+                times = times[-time_ranges[selected_range]:]
+                fluxes = fluxes[-time_ranges[selected_range]:]
+            if smooth and len(fluxes) > 12:
+                fluxes = uniform_filter1d(fluxes, size=12)
+            stats_block(times, fluxes, "Integral Electrons", threshold=None)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Integral Electron Flux"))
+            fig.update_layout(title="Integral Electrons (1-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True, key="integral_electrons")
         else:
-            st.caption("No Kp series available.")
+            st.caption("No integral electron data available.")
+
+        # Integral Protons Plot (1-day)
+        st.markdown("### Integral Protons Plot (1-day)")
+        url = "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-plot-1-day.json"
+        data = fetch_json(url)
+        if data and isinstance(data, list):
+            times = [row.get("time_tag") for row in data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in data]
+            if time_ranges[selected_range]:
+                times = times[-time_ranges[selected_range]:]
+                fluxes = fluxes[-time_ranges[selected_range]:]
+            if smooth and len(fluxes) > 12:
+                fluxes = uniform_filter1d(fluxes, size=12)
+            stats_block(times, fluxes, "Integral Protons Plot", threshold=None)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Integral Proton Flux"))
+            fig.update_layout(title="Integral Protons Plot (1-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True, key="integral_protons_plot")
+        else:
+            st.caption("No integral proton plot data available.")
+
+    # ------------- COLUMN 2 -------------
+    with col2:
+        # Magnetometers (1-day)
+        st.markdown("### Magnetometers (1-day)")
+        url = "https://services.swpc.noaa.gov/json/goes/primary/magnetometers-1-day.json"
+        data = fetch_json(url)
+        if data and isinstance(data, list):
+            times = [row.get("time_tag") for row in data if "time_tag" in row]
+            bx = [row.get("bx_gsm", 0) for row in data]
+            by = [row.get("by_gsm", 0) for row in data]
+            bz = [row.get("bz_gsm", 0) for row in data]
+            if time_ranges[selected_range]:
+                times = times[-time_ranges[selected_range]:]
+                bx = bx[-time_ranges[selected_range]:]
+                by = by[-time_ranges[selected_range]:]
+                bz = bz[-time_ranges[selected_range]:]
+            stats_block(times, bx, "Magnetometer Bx", threshold=None)
+            stats_block(times, by, "Magnetometer By", threshold=None)
+            stats_block(times, bz, "Magnetometer Bz", threshold=None)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=bx, mode="lines", name="Bx GSM"))
+            fig.add_trace(go.Scatter(x=times, y=by, mode="lines", name="By GSM"))
+            fig.add_trace(go.Scatter(x=times, y=bz, mode="lines", name="Bz GSM"))
+            fig.update_layout(title="Magnetometers (1-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="nT", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True, key="magnetometers")
+        else:
+            st.caption("No magnetometer data available.")
+
+        # SUVI Flares (7-day)
+        st.markdown("### SUVI Flares (7-day)")
+        url = "https://services.swpc.noaa.gov/json/goes/primary/suvi-flares-7-day.json"
+        data = fetch_json(url)
+        if data and isinstance(data, list):
+            times = [row.get("begin_time") for row in data if "begin_time" in row]
+            intensities = [row.get("peak_intensity", 0) for row in data]
+            if time_ranges[selected_range]:
+                times = times[-time_ranges[selected_range]:]
+                intensities = intensities[-time_ranges[selected_range]:]
+            stats_block(times, intensities, "SUVI Flare Peak Intensity", threshold=None)
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=times, y=intensities, name="SUVI Flare Intensity"))
+            fig.update_layout(title="SUVI Flares (7-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Peak Intensity", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True, key="suvi_flares")
+        else:
+            st.caption("No SUVI flares data available.")
+
+        # X-ray Background (7-day)
+        st.markdown("### X-ray Background (7-day)")
+        url = "https://services.swpc.noaa.gov/json/goes/primary/xray-background-7-day.json"
+        data = fetch_json(url)
+        if data and isinstance(data, list):
+            times = [row.get("time_tag") for row in data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in data]
+            if time_ranges[selected_range]:
+                times = times[-time_ranges[selected_range]:]
+                fluxes = fluxes[-time_ranges[selected_range]:]
+            if smooth and len(fluxes) > 12:
+                fluxes = uniform_filter1d(fluxes, size=12)
+            stats_block(times, fluxes, "X-ray Background", threshold=1e-7)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="X-ray Background Flux"))
+            fig.update_layout(title="X-ray Background (7-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True, key="xray_background")
+        else:
+            st.caption("No X-ray background data available.")
+
+        # X-rays (6-hour)
+        st.markdown("### X-rays (6-hour)")
+        url = "https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json"
+        data = fetch_json(url)
+        if data and isinstance(data, list):
+            times = [row.get("time_tag") for row in data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in data]
+            if time_ranges[selected_range]:
+                times = times[-time_ranges[selected_range]:]
+                fluxes = fluxes[-time_ranges[selected_range]:]
+            if smooth and len(fluxes) > 12:
+                fluxes = uniform_filter1d(fluxes, size=12)
+            stats_block(times, fluxes, "X-rays (6-hour)", threshold=1e-7)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="X-ray Flux"))
+            fig.update_layout(title="X-rays (6-hour)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True, key="xrays_6hour")
+        else:
+            st.caption("No X-rays data available.")
+
+    st.caption(f"Last updated: {last_updated()}")
+
 
 # ========== Forecasts Tab ==========
 with tab_forecast:
@@ -585,15 +756,140 @@ with tab_aurora:
     st.markdown(f"<pre>{bom_aurora_text}</pre>", unsafe_allow_html=True)
     st.caption(f"Last updated: {last_updated()}")
 
-# ========== Expert Data Tab ==========
+# ========== Expert Data Tab (Charts) ==========
 with tab_expert:
-    st.markdown("## GOES / L1 Expert Data")
-    wind_kms, bt, bz, f10_7 = get_goes_telemetry()
-    st.markdown(f"""
-    - **Solar Wind Speed:** {wind_kms} km/s
-    - **Magnetic Fields:** Bt: {bt} nT, Bz: {bz} nT
-    - **10.7cm Radio Flux:** {f10_7} sfu
-    """)
+    st.markdown("## GOES / L1 Expert Data (Expanded, Charts)")
+    col1, col2 = st.columns(2)
+
+    # ---------- Column 1 ----------
+    with col1:
+        st.markdown("### Differential Electrons (3-day)")
+        elec_data = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/differential-electrons-3-day.json")
+        if elec_data and isinstance(elec_data, list):
+            # Example: Plot electron flux vs time, if available
+            times = [row.get("time_tag") for row in elec_data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in elec_data]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Electron Flux"))
+            fig.update_layout(title="Differential Electron Flux", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No electron chart data available.")
+
+        st.markdown("### Integral Protons (1-day)")
+        ip_data = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/integral-protons-1-day.json")
+        if ip_data and isinstance(ip_data, list):
+            times = [row.get("time_tag") for row in ip_data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in ip_data]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Proton Flux"))
+            fig.update_layout(title="Integral Proton Flux (1-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No integral protons chart data available.")
+
+        st.markdown("### Integral Protons Plot (3-day)")
+        ipp_data = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/integral-protons-plot-3-day.json")
+        if ipp_data and isinstance(ipp_data, list):
+            times = [row.get("time_tag") for row in ipp_data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in ipp_data]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Proton Plot"))
+            fig.update_layout(title="Integral Proton Plot (3-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No integral protons plot chart data available.")
+
+        st.markdown("### Magnetometers (3-day)")
+        mag_data = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/magnetometers-3-day.json")
+        if mag_data and isinstance(mag_data, list):
+            times = [row.get("time_tag") for row in mag_data if "time_tag" in row]
+            bx = [row.get("bx_gsm", 0) for row in mag_data]
+            by = [row.get("by_gsm", 0) for row in mag_data]
+            bz = [row.get("bz_gsm", 0) for row in mag_data]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=bx, mode="lines", name="Bx GSM"))
+            fig.add_trace(go.Scatter(x=times, y=by, mode="lines", name="By GSM"))
+            fig.add_trace(go.Scatter(x=times, y=bz, mode="lines", name="Bz GSM"))
+            fig.update_layout(title="Magnetometers (3-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="nT", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No magnetometer chart data available.")
+
+    # ---------- Column 2 ----------
+    with col2:
+        st.markdown("### SUVI Flares (Latest)")
+        suvi_data = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/suvi-flares-latest.json")
+        if suvi_data and isinstance(suvi_data, list):
+            times = [row.get("begin_time") for row in suvi_data if "begin_time" in row]
+            intensities = [row.get("peak_intensity", 0) for row in suvi_data]
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=times, y=intensities, name="SUVI Flare Intensity"))
+            fig.update_layout(title="SUVI Flares (Latest)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Peak Intensity", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No SUVI flare chart data available.")
+
+        st.markdown("### X-ray Background (7-day)")
+        xrb_data = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/xray-background-7-day.json")
+        if xrb_data and isinstance(xrb_data, list):
+            times = [row.get("time_tag") for row in xrb_data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in xrb_data]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="X-ray Background Flux"))
+            fig.update_layout(title="X-ray Background (7-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No X-ray background chart data available.")
+
+        st.markdown("### X-ray Flares (7-day)")
+        xrf_data = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/xray-flares-7-day.json")
+        if xrf_data and isinstance(xrf_data, list):
+            times = [row.get("begin_time") for row in xrf_data if "begin_time" in row]
+            fluxes = [row.get("peak_flux", 0) for row in xrf_data]
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=times, y=fluxes, name="X-ray Flare Peak Flux"))
+            fig.update_layout(title="X-ray Flares (7-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Peak Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No X-ray flares chart data available.")
+
+        st.markdown("### X-rays (3-day)")
+        xrays_data = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/xrays-3-day.json")
+        if xrays_data and isinstance(xrays_data, list):
+            times = [row.get("time_tag") for row in xrays_data if "time_tag" in row]
+            fluxes = [row.get("flux", 0) for row in xrays_data]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="X-ray Flux"))
+            fig.update_layout(title="X-rays (3-day)", height=220,
+                             margin=dict(l=10, r=10, t=30, b=10),
+                             xaxis=dict(title="Time", color="#9fc8ff"),
+                             yaxis=dict(title="Flux", color="#9fc8ff"))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.caption("No X-rays chart data available.")
+
     st.caption(f"Last updated: {last_updated()}")
 
 # ========== PDF Export Tab ==========
