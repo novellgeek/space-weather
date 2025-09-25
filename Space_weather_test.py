@@ -461,15 +461,25 @@ tab_overview, tab_charts, tab_forecast, tab_aurora, tab_expert, tab_pdf, tab_hel
     "Overview", "Charts", "Forecasts", "Aurora", "Expert Data", "PDF Export", "Help & Info"
 ])
 
+
 # ========== Overview Tab ==========
 with tab_overview:
     st.markdown("## Space Weather Dashboard - Overview")
+
+    # Get summary metrics
     past, current = get_noaa_rsg_now_and_past()
     next24 = get_next24_summary()
     summary_text = make_summary(current, next24)
+
+    # Get structured NOAA discussion
+    structured_disc, noaa_discussion_src, noaa_discussion_raw = get_noaa_forecast_text()
+    src_note = noaa_discussion_src.split('/')[-1] if noaa_discussion_src else 'unavailable'
+
+    # Show summary metrics (R/S/G, next24)
     st.markdown(f"**Summary:** {summary_text}")
     st.caption(f"Last updated: {last_updated()}")
 
+    # Show the R/S/G badges visually
     def badge(label, level_key, aria):
         classes = f"neon-badge level-{level_key} pattern-{level_key if level_key in ['low','med','high','veryhigh'] else 'low'}"
         return f"<div class='{classes}' role='img' aria-label='{aria}' title='{aria}'><span>{label}</span></div>"
@@ -479,6 +489,25 @@ with tab_overview:
         badge(current['g'], current['lvl_g'], f"G scale now {current['g']}") +
         "</div>", unsafe_allow_html=True)
 
+    # Display structured NOAA sections (solar activity, energetic particle, etc)
+    st.markdown("### NOAA Forecast Sections")
+    for section, data in structured_disc.items():
+        if section.startswith('_'):
+            continue
+        summary = data.get("summary", "")
+        forecast = data.get("forecast", "")
+        if summary or forecast:
+            st.markdown(f"#### {section.replace('_',' ').title()}")
+            if summary:
+                st.markdown(f"**Summary:**\n{summary}")
+            if forecast:
+                st.markdown(f"**Forecast:**\n{forecast}")
+
+    # As fallback, show the reflowed raw text if no sections available
+    if not any(data.get("summary") or data.get("forecast") for k, data in structured_disc.items() if not k.startswith("_")):
+        st.markdown(structured_disc["_reflowed"].replace("\n","<br>"))
+
+    st.caption(f"Source: {src_note}")
 
 
 # ========== Charts Tab ==========
