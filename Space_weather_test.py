@@ -7,6 +7,7 @@ import os
 import base64
 import re
 from datetime import datetime
+import tempfile
 
 import plotly.graph_objects as go
 import requests
@@ -114,119 +115,120 @@ def g_scale_from_kp(kp):
 def last_updated():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
-# -------- NOAA text helpers & parser --------
-def _strip_meta_lines(raw_txt: str) -> list[str]:
-    lines = [ln.rstrip() for ln in raw_txt.splitlines()]
-    keep = []
-    for ln in lines:
-        t = ln.strip()
-        if not t:
-            keep.append("")
-            continue
-        if any(t.upper().startswith(x) for x in [
-            "FORECASTER:", "ISSUED:", "VALID:", "SOURCE:", "PRODUCT:",
-            "WWW.", "HTTP", "HTTPS"
-        ]):
-            continue
-        if set(t) <= set("-_=*#") and len(t) > 10:
-            continue
-        keep.append(ln)
-    # collapse >2 blank lines
-    out = []
-    blank_run = 0
-    for ln in keep:
-        if ln.strip() == "":
-            blank_run += 1
-            if blank_run <= 2:
-                out.append("")
-        else:
-            blank_run = 0
-            out.append(ln)
-    return out
+# ---------- NZ-flavoured, plain-English rewrite helpers ----------
+_NZ_REGIONAL_HINT = (
+    " (NZ/South Pacific focus)"
+)
 
-def parse_discussion_structured(raw_txt: str) -> dict:
-    lines = _strip_meta_lines(raw_txt)
+def _any(txt: str, *phrases) -> bool:
+    low = (txt or "").lower()
+    return any(p in low for p in phrases)
 
-    name_map = {
-        "solar activity": "solar_activity",
-        "energetic particle": "energetic_particle",
-        "solar wind": "solar_wind",
-        "geospace": "geospace",
-        "geo space": "geospace",
-        "geo-space": "geospace",
-    }
+def _nz_risk_phrase(kind: str, level: str) -> str:
+    if kind == "R":
+        return {
+            "ok": "HF comms across NZ should be fine.",
+            "caution": "Short HF dropouts are possible, mainly sunlit side; most NZ circuits OK.",
+            "watch": "Heightened risk of HF and GNSS disruption across NZ, esp. midday paths.",
+            "severe": "Significant HF and GNSS disruption likely across NZ and the Pacific."
+        }[level]
+    if kind == "S":
+        return {
+            "ok": "Radiation environment normal over NZ.",
+            "caution": "Elevated radiation — minor impacts; commercial flights OK, polar routes more affected.",
+            "watch": "High radiation risk for polar operations; monitor aviation/space assets in our region.",
+            "severe": "Severe radiation storm — restrict high-latitude ops; protect space assets."
+        }[level]
+    return {
+        "ok": "Geomagnetic field quiet; GNSS is stable across NZ.",
+        "caution": "Field unsettled — small GNSS accuracy dips possible; slim aurora chance in Southland.",
+        "watch": "Storm conditions — GNSS accuracy can degrade at times; good aurora odds in the deep south.",
+        "severe": "Severe storm — GNSS, HF, and power systems may be impacted; widespread aurora possible."
+    }[level]
 
-    main_header_re = re.compile(r"^(Solar\s*Activity|Energetic\s*Particle|Solar\s*Wind|Geo[\s-]*Space|Geospace)\b", re.I)
-    sub_header_re  = re.compile(r"^\.(?:24\s*hr\s*summary|summary)\b|^\.(?:forecast|forcast)\b", re.I)
+def _class_to_level(cls_key: str) -> str:
+    m = {"ok":"ok","caution":"caution","watch":"watch","severe":"severe"}
+    return m.get((cls_key or "").lower(), "ok")
 
-    data = {
-        "solar_activity": {"summary": "", "forecast": ""},
-        "energetic_particle": {"summary": "", "forecast": ""},
-        "solar_wind": {"summary": "", "forecast": ""},
-        "geospace": {"summary": "", "forecast": ""},
-        "_reflowed": ""
-    }
-
-    current_sec_key = None
-    current_sub = None
-    buf = []
-
-    def flush_buf():
-        nonlocal buf, current_sec_key, current_sub
-        if current_sec_key:
-            text = "\n".join([b.strip() for b in buf]).strip()
-            if text:
-                if current_sub is None:
-                    data[current_sec_key]["summary"] = (
-                        (data[current_sec_key]["summary"] + "\n\n" if data[current_sec_key]["summary"] else "")
-                        + text
-                    )
-                else:
-                    data[current_sec_key][current_sub] = (
-                        (data[current_sec_key][current_sub] + "\n\n" if data[current_sec_key][current_sub] else "")
-                        + text
-                    )
-        buf = []
-
-    for ln in lines:
-        mh = main_header_re.search(ln)
-        if mh:
-            flush_buf()
-            header = mh.group(1).lower().replace("  ", " ").strip()
-            for alias, key in name_map.items():
-                if alias in header:
-                    current_sec_key = key
-                    break
+def rewrite_to_nz(section: str, text: str, *,
+                  r_now="R0", s_now="S0", g_now="G0",
+                  day1=None) -> str:
+    tx = (text or "").strip()
+    if not tx:
+        base = "No significant activity reported."
+    else:
+        low = tx.lower()
+        if section == "solar_activity":
+            if _any(low, "x-class", "major flare", "significant flare"):
+                base = "Major solar flares noted — higher chance of radio/GNSS issues across New Zealand."
+            elif _any(low, "m-class", "moderate"):
+                base = "Moderate solar flares observed — brief HF/GNSS hiccups possible over NZ."
+            elif _any(low, "c-class", "low", "quiet"):
+                base = "The Sun is fairly quiet — only small flares, negligible impact for NZ."
             else:
-                current_sec_key = None
-            current_sub = None
-            continue
-
-        sh = sub_header_re.search(ln)
-        if sh and current_sec_key:
-            flush_buf()
-            low = ln.lower()
-            if "forecast" in low or "forcast" in low:
-                current_sub = "forecast"
+                base = "Solar activity is mixed but not unusual for the cycle; NZ impacts limited."
+        elif section == "solar_wind":
+            if _any(low, "cme", "shock", "sheath"):
+                base = "A CME is influencing the solar wind — conditions can stir up NZ geomagnetic activity."
+            elif _any(low, "high speed", "coronal hole", "600 km/s", "elevated"):
+                base = "Solar wind is running fast — may unsettle Earth’s field; aurora possible in the far south."
             else:
-                current_sub = "summary"
-            continue
-
-        if current_sec_key:
-            buf.append(ln)
-
-    flush_buf()
-
-    reflow = []
-    for ln in lines:
-        if ln.strip():
-            reflow.append(ln.strip())
+                base = "Solar wind conditions are near normal — minimal impact expected over NZ."
+        elif section == "geospace":
+            if _any(low, "g2", "g3", "storm"):
+                base = "Geomagnetic storming occurred — GNSS accuracy could dip; aurora chances improve in Southland."
+            elif _any(low, "active", "unsettled"):
+                base = "Field was unsettled — small GNSS wobbles possible; low aurora chance."
+            else:
+                base = "Geomagnetic field is quiet for NZ — comms and GNSS are stable."
         else:
-            reflow.append("")
-    data["_reflowed"] = "\n".join(reflow).strip() or raw_txt.strip()
-    return data
+            if _any(low, "elevated", "enhanced", "storm"):
+                base = "Energetic particles elevated — low operational impact for NZ; monitor polar routes."
+            else:
+                base = "Radiation environment looks normal for NZ operations."
+
+    r_cls = _r_class(r_now)
+    s_cls = _s_class(s_now)
+    g_cls = _g_class(g_now)
+
+    r_line = _nz_risk_phrase("R", _class_to_level(r_cls))
+    s_line = _nz_risk_phrase("S", _class_to_level(s_cls))
+    g_line = _nz_risk_phrase("G", _class_to_level(g_cls))
+
+    g_hint = ""
+    try:
+        if isinstance(day1, dict):
+            g_day1 = (day1.get("g") or "G0").upper()
+            if g_day1.startswith("G2"):
+                g_hint = " Expect stormy geomagnetic periods — better aurora odds for the deep south."
+            elif g_day1.startswith(("G3","G4","G5")):
+                g_hint = " Storm conditions likely — plan for GNSS variability and stronger aurora potential."
+    except Exception:
+        pass
+
+    return f"{base}{_NZ_REGIONAL_HINT}\n• {r_line}\n• {s_line}\n• {g_line}{g_hint}"
+
+# ========== Narrative fallback detector ==========
+def detect_r_s_watch_flags(structured_disc: dict) -> dict:
+    """
+    Look through NOAA text for explicit mentions of R4/R5 or S4/S5 and set watch flags.
+    This is a coarse, global detector (3-day narrative isn't day-specific).
+    """
+    parts = []
+    for key in ("solar_activity", "energetic_particle", "solar_wind", "geospace"):
+        sec = (structured_disc.get(key, {}) or {})
+        parts.extend([sec.get("summary", ""), sec.get("forecast", "")])
+    parts.append(structured_disc.get("_reflowed", ""))
+    blob = " ".join([p for p in parts if p]).upper()
+
+    # Allow forms like "R4", "R5", "R4+", "R4 or greater", "R4-R5"
+    r4plus = bool(re.search(r"\bR(?:4|5)(?:\+|\b)", blob)) or bool(re.search(r"R4\s*(?:OR GREATER|\+)", blob))
+    s4plus = bool(re.search(r"\bS(?:4|5)(?:\+|\b)", blob)) or bool(re.search(r"S4\s*(?:OR GREATER|\+)", blob))
+
+    return {"r4plus": r4plus, "s4plus": s4plus}
 
 # ========== Data Fetchers ==========
+
 def get_bom_aurora():
     if bom is None:
         return f"Aurora info unavailable. ({'BOM_ERR' in globals() and BOM_ERR or 'pyspaceweather not installed or API key missing'})"
@@ -358,16 +360,39 @@ def first_sentence(text: str, max_chars: int = 220):
 
 # ---------- severity class helpers ----------
 def _r_class(r: str) -> str:
+    """
+    New mapping:
+      R0 = ok
+      R1 = caution
+      R2 = watch
+      R3 = caution   (changed)
+      R4/R5 = watch  (changed)
+    Others -> severe (fallback)
+    """
     r = (r or "").upper()
     if r.startswith("R0"): return "ok"
     if r.startswith("R1"): return "caution"
     if r.startswith("R2"): return "watch"
+    if r.startswith("R3"): return "caution"        # changed per request
+    if r.startswith(("R4", "R5")): return "watch"  # 4+ are watch
     return "severe"
 
 def _s_class(s: str) -> str:
+    """
+    New mapping:
+      S0 = ok
+      S1 = caution
+      S2 = severe (unchanged from your old mapping)
+      S3 = caution   (changed)
+      S4/S5 = watch  (changed)
+    Others -> severe (fallback)
+    """
     s = (s or "").upper()
     if s.startswith("S0"): return "ok"
     if s.startswith("S1"): return "caution"
+    if s.startswith("S2"): return "severe"
+    if s.startswith("S3"): return "caution"        # changed per request
+    if s.startswith(("S4", "S5")): return "watch"  # 4+ are watch
     return "severe"
 
 def _g_class(g: str) -> str:
@@ -377,14 +402,31 @@ def _g_class(g: str) -> str:
     if g.startswith("G2"): return "watch"
     return "severe"
 
-def r_label_and_class_for_day(day: dict) -> tuple[str, str]:
+def r_label_and_class_for_day(day: dict, flags: dict | None = None) -> tuple[str, str]:
+    """
+    Day-card chip logic:
+      - If narrative mentions R4/R5 anywhere -> show R4+ as watch (override).
+      - Else if R3+ prob >=1% -> show R3+ as caution.
+      - Else if R1–R2 >=10% -> show R1–R2 as caution.
+      - Else R0.
+    """
+    if flags and flags.get("r4plus"):
+        return "R4+", "watch"
     if (day.get("r3", 0) or 0) >= 1:
-        return "R3+", "severe"
+        return "R3+", "caution"
     if (day.get("r12", 0) or 0) >= 10:
         return "R1–R2", "caution"
     return "R0", "ok"
 
-def s_label_and_class_for_day(day: dict) -> tuple[str, str]:
+def s_label_and_class_for_day(day: dict, flags: dict | None = None) -> tuple[str, str]:
+    """
+    Day-card chip logic:
+      - If narrative mentions S4/S5 anywhere -> show S4+ as watch (override).
+      - Else if S1+ >=10% -> show S1+ as caution.
+      - Else S0.
+    """
+    if flags and flags.get("s4plus"):
+        return "S4+", "watch"
     if (day.get("s1", 0) or 0) >= 10:
         return "S1+", "caution"
     return "S0", "ok"
@@ -461,40 +503,48 @@ def get_next24_summary():
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_noaa_forecast_text():
+    """
+    Return a structured dict plus the source URL and the FULL raw text (no truncation).
+    We try discussion.txt first, then 3-day-forecast.txt as a fallback.
+    """
     urls = [
         "https://services.swpc.noaa.gov/text/discussion.txt",
         "https://services.swpc.noaa.gov/text/3-day-forecast.txt",
     ]
-    for url in urls:
-        txt = fetch_text(url) or ""
-        if not txt:
-            continue
-        lines = [ln.rstrip() for ln in txt.splitlines()]
-        block = []
-        for ln in lines:
-            block.append(ln)
-            if ln.startswith("III.") or ln.lower().startswith("synopsis"):
-                break
-        top = "\n".join(block).strip() if block else txt
+
+    def _try(url):
+        raw = fetch_text(url) or ""
+        if not raw.strip():
+            return None
+        # Use the full text; do NOT stop at 'III.' or 'synopsis'
+        full = raw.strip()
         try:
-            structured = parse_discussion_structured(top)
+            structured = parse_discussion_structured(full)
         except Exception:
             structured = {
                 "solar_activity": {"summary": "", "forecast": ""},
                 "energetic_particle": {"summary": "", "forecast": ""},
                 "solar_wind": {"summary": "", "forecast": ""},
                 "geospace": {"summary": "", "forecast": ""},
-                "_reflowed": top
+                "_reflowed": full
             }
-        return structured, url, top
+        return structured, url, full
 
-    return {
+    for u in urls:
+        got = _try(u)
+        if got:
+            return got
+
+    # Hard fallback
+    return ({
         "solar_activity": {"summary": "", "forecast": ""},
         "energetic_particle": {"summary": "", "forecast": ""},
         "solar_wind": {"summary": "", "forecast": ""},
         "geospace": {"summary": "", "forecast": ""},
         "_reflowed": "NOAA forecast discussion unavailable."
-    }, None, ""
+    }, None, "")
+
+
 
 def make_summary(current, next24):
     g = next24["g_bucket"]
@@ -547,7 +597,6 @@ def create_kp_chart():
                       xaxis=dict(title="Time", color="#9fc8ff"),
                       yaxis=dict(title="Kp", color="#9fc8ff"))
     return fig
-
 # ========== UI Styles ==========
 st.markdown(f"""<style>
 :root {{
@@ -561,7 +610,6 @@ st.markdown(f"""<style>
 html, body, .main, .block-container {{ font-size: calc(16px * var(--scale)); }}
 .badge-col {{ display:flex; gap:.5rem; flex-wrap:wrap; margin:.5rem 0 1rem 0; }}
 .neon-badge {{ padding:.35rem .6rem; border-radius:.5rem; border:1px solid var(--border); color:var(--fg); }}
-
 .grid-bom {{ display:grid; gap:.75rem; grid-template-columns: repeat(5, 1fr); }}
 .box {{ background:var(--card); border:1px solid var(--border); border-radius:.6rem; padding:.75rem; }}
 .box h5 {{ margin:.2rem 0 .6rem 0; color:#cfe3ff; font-size:1rem; }}
@@ -571,20 +619,15 @@ html, body, .main, .block-container {{ font-size: calc(16px * var(--scale)); }}
 .impact {{ margin-top:.6rem; display:grid; grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr; gap:.3rem .6rem; }}
 .impact div {{ padding:.35rem .5rem; border-bottom:1px dashed rgba(139,233,253,.18); }}
 .impact .hdr {{ color:#9fc8ff; font-weight:700; border-bottom:1px solid rgba(139,233,253,.25); }}
-
-/* three-card summaries */
 .tri-grid {{ display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; margin-top:.75rem; }}
 .tri-card {{ background:var(--card); border:1px solid var(--border); border-radius:.6rem; padding:.8rem; }}
 .tri-card h5 {{ margin:.1rem 0 .4rem 0; color:#cfe3ff; font-size:1rem; }}
 .tri-card .body {{ color:#cfe3ff; opacity:.95; line-height:1.35; }}
-
-/* severity colors for R/S/G chips */
 .ok     {{ background:#2ecc71; color:#0b0b0b; }}
 .caution{{ background:#f1c40f; color:#0b0b0b; }}
 .watch  {{ background:#e67e22; color:#0b0b0b; }}
 .severe {{ background:#e74c3c; color:#0b0b0b; }}
 </style>""", unsafe_allow_html=True)
-
 
 # ========== Tabs ==========
 tab_overview, tab_charts, tab_forecast, tab_aurora, tab_expert, tab_pdf, tab_help = st.tabs([
@@ -602,7 +645,26 @@ with tab_overview:
     structured_disc, noaa_discussion_src, _raw = get_noaa_forecast_text()
     src_note = noaa_discussion_src.split('/')[-1] if noaa_discussion_src else 'unavailable'
 
-    # --- helpers for BOM grid ---
+    # ----------------- 1) IMPACT (Next 24 h) — now at the top -----------------
+    levels = _impact_level(current, day1)
+    st.markdown("### Impact (Next 24 h)")
+    im = ["<div class='impact'>",
+          "<div class='hdr'>Domain</div>",
+          "<div class='hdr'>HF Comms</div>",
+          "<div class='hdr'>GNSS</div>",
+          "<div class='hdr'>Power (GIC)</div>",
+          "<div class='hdr'>Radiation / Polar</div>",
+          "<div><strong>Status</strong></div>",
+          f"<div>{_impact_tag(levels['HF Comms'])}</div>",
+          f"<div>{_impact_tag(levels['GNSS'])}</div>",
+          f"<div>{_impact_tag(levels['Power (GIC)'])}</div>",
+          f"<div>{_impact_tag(levels['Radiation / Polar'])}</div>",
+          "</div>"]
+    st.markdown("".join(im), unsafe_allow_html=True)
+    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
+
+
+    # ----------------- 2) Past/Current + Day 1–3 cards -----------------
     def _pill(txt, severity_cls):
         return f"<span class='rs-pill {severity_cls}'>{txt}</span>"
 
@@ -621,7 +683,6 @@ with tab_overview:
           <div class="subline">{subline_html}</div>
         </div>"""
 
-    # --- Past & Current ---
     past_html = col_block(
         "Past 24 hours",
         (past['r'], _r_class(past['r'])),
@@ -637,7 +698,6 @@ with tab_overview:
         "Radio blackouts · Radiation storms · Geomagnetic storms"
     )
 
-    # --- Day 1–3 ---
     r1, r1_cls = r_label_and_class_for_day(day1)
     s1, s1_cls = s_label_and_class_for_day(day1)
     g1, g1_cls = g_label_and_class_for_day(day1)
@@ -657,6 +717,8 @@ with tab_overview:
     )
 
     r3, r3_cls = r_label_and_class_for_day(day3)
+    s3, s3_cls = r_label_and_class_for_day(day3)[0], s_label_and_class_for_day(day3)[1]  # keep style consistent
+    # (Fix: use s_label_and_class_for_day for S and g_label_and_class_for_day for G)
     s3, s3_cls = s_label_and_class_for_day(day3)
     g3, g3_cls = g_label_and_class_for_day(day3)
     d3_html = col_block(
@@ -665,86 +727,103 @@ with tab_overview:
         f"R1–R2: {day3['r12']}% · R3+: {day3['r3']}% · S1+: {day3['s1']}% · Kp≈{day3['kp'] if day3['kp'] is not None else '~'}"
     )
 
-    # --- render 5-card BOM grid ---
     st.markdown(
         f"<div class='grid-bom'>{past_html}{curr_html}{d1_html}{d2_html}{d3_html}</div>",
         unsafe_allow_html=True
     )
     st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
 
-    # ----------------------------------------------------------------
-    # (If needed) CSS for the three summary cards — add this to your
-    # global <style> once, then remove this comment & block.
-    # .tri-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; margin-top:.75rem; }
-    # .tri-card { background:var(--card); border:1px solid var(--border); border-radius:.6rem; padding:.8rem; }
-    # .tri-card h5 { margin:.1rem 0 .4rem 0; color:#cfe3ff; font-size:1rem; }
-    # .tri-card .body { color:#cfe3ff; opacity:.95; line-height:1.35; }
-    # ----------------------------------------------------------------
-    # --- Impact matrix ---
-    levels = _impact_level(current, day1)
-    st.markdown("### Impact (Next 24 h)")
-    im = ["<div class='impact'>",
-          "<div class='hdr'>Domain</div>",
-          "<div class='hdr'>HF Comms</div>",
-          "<div class='hdr'>GNSS</div>",
-          "<div class='hdr'>Power (GIC)</div>",
-          "<div class='hdr'>Radiation / Polar</div>",
-          "<div><strong>Status</strong></div>",
-          f"<div>{_impact_tag(levels['HF Comms'])}</div>",
-          f"<div>{_impact_tag(levels['GNSS'])}</div>",
-          f"<div>{_impact_tag(levels['Power (GIC)'])}</div>",
-          f"<div>{_impact_tag(levels['Radiation / Polar'])}</div>",
-          "</div>"]
-    st.markdown("".join(im), unsafe_allow_html=True)
-    
-    # --- Three short summaries (Solar Activity / Solar Wind / Geospace) ---
-    def _short(txt: str, max_chars: int = 260):
+    # ----------------- helpers to pull NOAA 24h text robustly -----------------
+    def _clean_noaa_lines(txt: str) -> str:
         if not txt:
             return ""
-        m = re.search(r"(.+?\.)", txt.strip(), re.S)
-        s = (m.group(1) if m else txt.strip()).replace("\n", " ")
-        return s if len(s) <= max_chars else (s[:max_chars-1].rstrip() + "…")
+        lines = [ln.strip() for ln in txt.replace("\r", "").split("\n")]
+        keep = [ln for ln in lines if ln and not ln.startswith(":") and "Prepared by" not in ln]
+        out = " ".join(keep).strip()
+        return re.sub(r"\s{2,}", " ", out)
 
-    sa_summary = (structured_disc.get("solar_activity", {}) or {}).get("summary", "")
-    sw_summary = (structured_disc.get("solar_wind", {}) or {}).get("summary", "")
-    gs_summary = (structured_disc.get("geospace", {}) or {}).get("summary", "")
-    # --- Three full 24 hr Summaries (text columns) ---
-    sa_full = (structured_disc.get("solar_activity", {}) or {}).get("summary", "").strip()
-    sw_full = (structured_disc.get("solar_wind", {}) or {}).get("summary", "").strip()
-    gs_full = (structured_disc.get("geospace", {}) or {}).get("summary", "").strip()
+    def _pick_source_text() -> str:
+        a = fetch_text("https://services.swpc.noaa.gov/text/discussion.txt") or ""
+        if len(a.strip()) > 800:
+            return a
+        b = fetch_text("https://services.swpc.noaa.gov/text/3-day-forecast.txt") or ""
+        return b or a
 
+    def _grab_between(text: str, start_pat: str, end_pat_list: list[str]) -> str:
+        m = re.search(start_pat, text, re.I | re.S)
+        if not m:
+            return ""
+        start = m.end()
+        end = len(text)
+        for p in end_pat_list:
+            m2 = re.search(p, text[start:], re.I | re.S)
+            if m2:
+                end = start + m2.start()
+                break
+        return text[start:end].strip()
+
+    @st.cache_data(ttl=600, show_spinner=False)
+    def get_noaa_24h_summaries_direct() -> dict:
+        blob = _pick_source_text().replace("\r", "")
+        sa_start = r"(?:^|\n)\s*(?:I\.|\d\.)?\s*Solar\s*Activity.*?(?:24\s*hr|24hr|24\s*hour)?\s*summary\b.*?"
+        sw_start = r"(?:^|\n)\s*(?:II\.|\d\.)?\s*Solar\s*Wind.*?(?:24\s*hr|24hr|24\s*hour)?\s*summary\b.*?"
+        gs_start = r"(?:^|\n)\s*(?:III\.|\d\.)?\s*(?:Geospace|Geo[\s-]*Space).*?(?:24\s*hr|24hr|24\s*hour)?\s*summary\b.*?"
+
+        ends = [
+            r"(?:^|\n)\s*\.?\s*(?:forecast|forcast)\b",
+            r"(?:^|\n)\s*(?:II\.|\d\.)\s*Solar\s*Wind\b",
+            r"(?:^|\n)\s*(?:III\.|\d\.)\s*(?:Geospace|Geo[\s-]*Space)\b",
+            r"(?:^|\n)\s*(?:I\.|\d\.)\s*Solar\s*Activity\b",
+        ]
+
+        sa = _clean_noaa_lines(_grab_between(blob, sa_start, ends))
+        sw = _clean_noaa_lines(_grab_between(blob, sw_start, ends))
+        gs = _clean_noaa_lines(_grab_between(blob, gs_start, ends))
+
+        if not sa:
+            sa = _clean_noaa_lines(_grab_between(blob, r"(?:^|\n)\s*(?:I\.|\d\.)?\s*Solar\s*Activity\b.*?", ends))
+        if not sw:
+            sw = _clean_noaa_lines(_grab_between(blob, r"(?:^|\n)\s*(?:II\.|\d\.)?\s*Solar\s*Wind\b.*?", ends))
+        if not gs:
+            gs = _clean_noaa_lines(_grab_between(blob, r"(?:^|\n)\s*(?:III\.|\d\.)?\s*(?:Geospace|Geo[\s-]*Space)\b.*?", ends))
+
+        return {"solar_activity": sa or "—", "solar_wind": sw or "—", "geospace": gs or "—"}
+
+    # ----------------- 3) NZ plain-English summaries -----------------
+    # Build text for NZ rewrite (use the robust 24h pulls for better context)
+    direct_24h = get_noaa_24h_summaries_direct()
+    sa_full = direct_24h["solar_activity"]
+    sw_full = direct_24h["solar_wind"]
+    gs_full = direct_24h["geospace"]
+
+    st.markdown("### New Zealand Plain-English Summaries")
     c1, c2, c3 = st.columns(3)
-
     with c1:
-        st.markdown("### Solar Activity — 24 hr Summary")
-        st.markdown(sa_full.replace("\n", "<br>") if sa_full else "—", unsafe_allow_html=True)
-
+        st.markdown("#### Solar Activity (NZ)")
+        st.info(rewrite_to_nz("solar_activity", sa_full,
+                              r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1))
     with c2:
-        st.markdown("### Solar Wind — 24 hr Summary")
-        st.markdown(sw_full.replace("\n", "<br>") if sw_full else "—", unsafe_allow_html=True)
-
+        st.markdown("#### Solar Wind (NZ)")
+        st.info(rewrite_to_nz("solar_wind", sw_full,
+                              r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1))
     with c3:
-        st.markdown("### Geospace — 24 hr Summary")
-        st.markdown(gs_full.replace("\n", "<br>") if gs_full else "—", unsafe_allow_html=True)
+        st.markdown("#### Geospace (NZ)")
+        st.info(rewrite_to_nz("geospace", gs_full,
+                              r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1))
 
+    # ----------------- 4) NOAA 24-hour Summaries (Raw text) -----------------
+    st.markdown("### NOAA 24-hour Summaries (Raw text)")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("**Solar Activity — 24 hr Summary**")
+        st.markdown(sa_full.replace("\n", "<br>"), unsafe_allow_html=True)
+    with c2:
+        st.markdown("**Solar Wind — 24 hr Summary**")
+        st.markdown(sw_full.replace("\n", "<br>"), unsafe_allow_html=True)
+    with c3:
+        st.markdown("**Geospace — 24 hr Summary**")
+        st.markdown(gs_full.replace("\n", "<br>"), unsafe_allow_html=True)
 
-    cards_html = f"""
-    <div class="tri-grid">
-      <div class="tri-card">
-        <h5>Solar Activity</h5>
-        <div class="body">{_short(sa_summary) or "—"}</div>
-      </div>
-      <div class="tri-card">
-        <h5>Solar Wind</h5>
-        <div class="body">{_short(sw_summary) or "—"}</div>
-      </div>
-      <div class="tri-card">
-        <h5>Geospace</h5>
-        <div class="body">{_short(gs_summary) or "—"}</div>
-      </div>
-    </div>
-    """
-    st.markdown(cards_html, unsafe_allow_html=True)
 
 
 
@@ -975,28 +1054,86 @@ with tab_charts:
 
     st.caption(f"Last updated: {last_updated()}")
 
-# ========== Forecasts Tab ==========
+
 # ========== Forecasts Tab ==========
 with tab_forecast:
     st.markdown("## Three-Day Forecast")
 
-    # Pull structured text + 3-day numbers
+    # Pull structured text + 3-day numbers + current R/S/G
     structured_disc, noaa_discussion_src, _raw = get_noaa_forecast_text()
+    narrative_flags = detect_r_s_watch_flags(structured_disc)
     src_note = noaa_discussion_src.split('/')[-1] if noaa_discussion_src else 'unavailable'
     three = get_3day_summary()
     day1, day2, day3 = three["days"]
+    past, current = get_noaa_rsg_now_and_past()
 
-    # --- Top: Day 1 • Day 2 • Day 3 quick matrix ---
-    def _kp_str(v):
-        return "~" if v is None else f"{v:.1f}"
+    # ---------- Fallback helpers for NOAA "Forecast" text ----------
+    def _clean_noaa_text(txt: str) -> str:
+        if not txt:
+            return ""
+        lines = [ln.strip() for ln in txt.replace("\r", "").split("\n")]
+        keep = [ln for ln in lines if ln and not ln.startswith(":") and "Prepared by" not in ln]
+        return re.sub(r"\s{2,}", " ", " ".join(keep)).strip()
+
+    def _fallback_forecast_from_reflow(structured: dict, sec_label_regex: str) -> str:
+        """
+        If the 'forecast' field is empty, try to carve a forecast paragraph out of
+        the raw '_reflowed' blob by grabbing text after a 'Forecast' marker (if present)
+        for the given section.
+        """
+        blob = (structured.get("_reflowed") or "").replace("\r", "")
+        if not blob:
+            return ""
+
+        # Try to find the section header (e.g., 'Solar Wind', 'Geospace') then the Forecast block.
+        # Stop at the next section header or end.
+        start_pat = rf"(?:^|\n).*?(?:{sec_label_regex}).*?(?:Forecast|Forcast)\b.*?"
+        end_pats = [
+            r"(?:^|\n)\s*(?:Summary|24\s*hr|24hr)\b",    # if NOAA flips order
+            r"(?:^|\n)\s*Solar\s*Activity\b",
+            r"(?:^|\n)\s*Energetic\s*Particle\b",
+            r"(?:^|\n)\s*Solar\s*Wind\b",
+            r"(?:^|\n)\s*(?:Geo[\s-]*Space|Geospace)\b",
+        ]
+        m = re.search(start_pat, blob, re.I | re.S)
+        if not m:
+            return ""
+
+        start = m.end()
+        end = len(blob)
+        for pat in end_pats:
+            m2 = re.search(pat, blob[start:], re.I | re.S)
+            if m2:
+                end = start + m2.start()
+                break
+
+        carved = blob[start:end].strip()
+        # Keep a couple of sentences
+        if carved:
+            sent = re.findall(r"(.+?\.)", carved.replace("\n", " "))
+            carved = " ".join(sent[:5]).strip() if sent else carved
+        return _clean_noaa_text(carved)
+
+    def _forecast_for(structured: dict, key: str, sec_label_regex: str) -> str:
+        fc = _clean_noaa_text((structured.get(key, {}) or {}).get("forecast", ""))
+        if fc:
+            return fc
+        return _fallback_forecast_from_reflow(structured, sec_label_regex) or "—"
+
+    # ---------- Top: Day 1 • Day 2 • Day 3 quick matrix ----------
+    def _kp_str(v): return "~" if v is None else f"{v:.1f}"
 
     def day_card(col, title, d):
         with col:
             st.markdown(f"### {title}")
+            r_lbl, r_cls = r_label_and_class_for_day(d, narrative_flags)
+            s_lbl, s_cls = s_label_and_class_for_day(d, narrative_flags)
+            g_lbl, g_cls = g_label_and_class_for_day(d)
             st.markdown(
-                f"- **Geomagnetic (G):** {d['g']}  ·  **Kp≈** {_kp_str(d['kp'])}\n"
-                f"- **R1–R2:** {d['r12']}%  ·  **R3+:** {d['r3']}%\n"
-                f"- **S1+:** {d['s1']}%"
+                f"- **Geomagnetic (G):** <span class='{g_cls}' style='padding:.1rem .35rem;border-radius:.35rem'>{g_lbl}</span>  ·  **Kp≈** {_kp_str(d['kp'])}\n"
+                f"- **Radiation (S):** <span class='{s_cls}' style='padding:.1rem .35rem;border-radius:.35rem'>{s_lbl}</span>  ·  **S1+:** {d['s1']}%\n"
+                f"- **Radio (R):** <span class='{r_cls}' style='padding:.1rem .35rem;border-radius:.35rem'>{r_lbl}</span>  ·  **R1–R2:** {d['r12']}%  ·  **R3+:** {d['r3']}%",
+                unsafe_allow_html=True
             )
 
     c1, c2, c3 = st.columns(3)
@@ -1004,66 +1141,78 @@ with tab_forecast:
     day_card(c2, "Day 2", day2)
     day_card(c3, "Day 3", day3)
 
-    st.divider()
+    # Spacer for readability
+    st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
 
-    # --- Narrative (3-Day) — show only "Forecast" text, not 24 hr summaries ---
+    # ---------- Narrative (3-Day) with robust fallbacks ----------
     st.markdown("### Narrative (3-Day)")
-    sections = [
-        ("Solar Activity", "solar_activity"),
-        ("Energetic Particle", "energetic_particle"),
-        ("Solar Wind", "solar_wind"),
-        ("Geospace", "geospace"),
-    ]
-    for title, key in sections:
-        fc = (structured_disc.get(key, {}) or {}).get("forecast", "").strip()
-        if fc:
-            st.markdown(f"#### {title}")
-            st.markdown(fc.replace("\n", "<br>"), unsafe_allow_html=True)
 
-    st.caption(f"Source: {src_note}")
+    # Pull forecast text for each section, with resilient fallbacks
+    fc_sa = _forecast_for(structured_disc, "solar_activity", r"Solar\s*Activity")
+    fc_ep = _forecast_for(structured_disc, "energetic_particle", r"Eng?ergetic\s*Particle")
+    fc_sw = _forecast_for(structured_disc, "solar_wind", r"Solar\s*Wind")
+    fc_gs = _forecast_for(structured_disc, "geospace", r"(?:Geo[\s-]*Space|Geospace)")
+
+    for title, fc_txt in [
+        ("Solar Activity", fc_sa),
+        ("Energetic Particle", fc_ep),
+        ("Solar Wind", fc_sw),
+        ("Geospace", fc_gs),
+    ]:
+        if fc_txt and fc_txt != "—":
+            st.markdown(f"#### {title}")
+            st.markdown(fc_txt.replace("\n", "<br>"), unsafe_allow_html=True)
+
+    st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
+
+    # ---------- NZ Plain-English (3-Day Context) ----------
+    st.divider()
+    st.markdown("### NZ Plain-English (3-Day Context)")
+
+    nz_fc_sa = rewrite_to_nz("solar_activity", fc_sa,
+                             r_now=current['r'], s_now=current['s'], g_now=current['g'],
+                             day1=day1)
+    nz_fc_sw = rewrite_to_nz("solar_wind", fc_sw,
+                             r_now=current['r'], s_now=current['s'], g_now=current['g'],
+                             day1=day1)
+    nz_fc_gs = rewrite_to_nz("geospace", fc_gs,
+                             r_now=current['r'], s_now=current['s'], g_now=current['g'],
+                             day1=day1)
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("#### Solar Activity (NZ)")
+        st.info(nz_fc_sa)
+    with c2:
+        st.markdown("#### Solar Wind (NZ)")
+        st.info(nz_fc_sw)
+    with c3:
+        st.markdown("#### Geospace (NZ)")
+        st.info(nz_fc_gs)
+        
+        st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
+
+
 
 
 # ========== Aurora Tab ==========
 with tab_aurora:
-    #Rebuild all inputs locally so we don't depend on other-tab variables
-    structured_disc, noaa_discussion_src, _raw = get_noaa_forecast_text()
-    src_note = noaa_discussion_src.split('/')[-1] if noaa_discussion_src else 'unavailable'
+    # Only show BOM Aurora content (no NOAA forecast)
     bom_aurora_text = get_bom_aurora()
 
-    # Build a self-contained HTML block for NOAA text
-    def _sec_html(title, sec):
-        sec = sec or {}
-        has_any = (sec.get("summary") or sec.get("forecast"))
-        if not has_any:
-            return ""
-        s = []
-        s.append(f"<h4 style='margin:.2rem 0 .4rem 0;color:#cfe3ff'>{title}</h4>")
-        if sec.get("summary"):
-            s.append("<div class='subttl' style='margin-top:.2rem;'>24 hr Summary</div>")
-            s.append(f"<div style='color:#cfe3ff;margin:.2rem 0 0.8rem 0;'>{sec['summary'].replace('\\n','<br>')}</div>")
-        if sec.get("forecast"):
-            s.append("<div class='subttl' style='margin-top:.2rem;'>Forecast (3-day)</div>")
-            s.append(f"<div style='color:#cfe3ff;margin:.2rem 0 0.8rem 0;'>{sec['forecast'].replace('\\n','<br>')}</div>")
-        return "\n".join(s)
+    st.markdown("## Aurora (BOM)")
 
-    content_html = "".join([
-        _sec_html("Solar Activity", structured_disc.get("solar_activity")),
-        _sec_html("Energetic Particle", structured_disc.get("energetic_particle")),
-        _sec_html("Solar Wind", structured_disc.get("solar_wind")),
-        _sec_html("Geospace", structured_disc.get("geospace")),
-    ]) or (structured_disc.get("_reflowed", "") or "").replace("\n", "<br>")
-
-    st.markdown(f"""
-    <div class='section' role='region' aria-label='NOAA Forecast & Aurora'>
-      <div class='subttl'>NOAA Forecast
-        <span style="opacity:.7;font-size:.9em;">({src_note})</span>
-      </div>
-      <div style='margin-top:.6rem;'>{content_html}</div>
-      <hr style='border-color:rgba(139,233,253,.18)'>
+    st.markdown("""
+    <div class='section' role='region' aria-label='BOM Aurora'>
       <div class='subttl'>BOM Aurora</div>
-      <div style='white-space:pre-line;color:#cfe3ff;margin-top:.5rem;'>{bom_aurora_text}</div>
+      <div style='white-space:pre-line;color:#cfe3ff;margin-top:.5rem;'>%s</div>
     </div>
-    """, unsafe_allow_html=True)
+    """ % (bom_aurora_text or "No aurora alerts/outlooks."),
+    unsafe_allow_html=True)
+    
+    st.caption(f"Last updated: {last_updated()} · Source: BOM Aurora / SWS")
+
+
 
 # ========== Expert Data Tab (Charts) ==========
 with tab_expert:
@@ -1075,7 +1224,6 @@ with tab_expert:
         st.markdown("### Differential Electrons (3-day)")
         elec_data = fetch_json("https://services.swpc.noaa.gov/json/goes/primary/differential-electrons-3-day.json")
         if elec_data and isinstance(elec_data, list):
-            # Example: Plot electron flux vs time, if available
             times = [row.get("time_tag") for row in elec_data if "time_tag" in row]
             fluxes = [row.get("flux", 0) for row in elec_data]
             fig = go.Figure()
@@ -1201,7 +1349,6 @@ with tab_expert:
 
     st.caption(f"Last updated: {last_updated()}")
 
-
 # ========== PDF Export Tab ==========
 with tab_pdf:
     st.markdown("## Export Management PDF")
@@ -1210,8 +1357,9 @@ with tab_pdf:
     day1 = three["days"][0]
     next24 = get_next24_summary()
     bom_aurora_text = get_bom_aurora()
-    summary_text = make_summary(current, next24)
     structured_disc, noaa_discussion_src, noaa_discussion_raw = get_noaa_forecast_text()
+    narrative_flags = detect_r_s_watch_flags(structured_disc)  # NEW
+    summary_text = make_summary(current, next24)
 
     st.info("You can customize which sections and charts to include in your PDF below.")
     include_xray = st.checkbox("Include Solar X-ray Chart", True)
@@ -1269,9 +1417,9 @@ with tab_pdf:
                 return _s_class(label)
             return _g_class(label)
 
-        # derive day1 labels/classes for "Next 24 h" row
-        r_lbl, r_cls = r_label_and_class_for_day(day1)
-        s_lbl, s_cls = s_label_and_class_for_day(day1)
+        # derive day1 labels/classes for "Next 24 h" row (use narrative fallback)
+        r_lbl, r_cls = r_label_and_class_for_day(day1, narrative_flags)
+        s_lbl, s_cls = s_label_and_class_for_day(day1, narrative_flags)
         g_lbl, g_cls = g_label_and_class_for_day(day1)
 
         class PDF(FPDF):
@@ -1298,7 +1446,7 @@ with tab_pdf:
         def H(title, size=18):
             pdf.set_text_color(*C_TEAL); pdf.set_font("Helvetica", "B", size); pdf.cell(0, 10, title, ln=1)
             pdf.set_text_color(0,0,0)
-
+        
         # Executive Summary
         pdf.add_page(); pdf.ln(6)
         H("Executive Summary", size=18)
@@ -1408,22 +1556,50 @@ with tab_pdf:
 # ========== Help & Info Tab ==========
 with tab_help:
     st.markdown("## Help & Information")
-    st.info("This dashboard displays real-time space weather data from NOAA and BOM, including solar activity, geomagnetic storms, and aurora outlooks. \
-        Use the tabs above to view detailed charts, expert data, and export management-grade PDFs. See the sidebar for settings and accessibility options.")
+    st.info(
+        "This dashboard displays real-time space weather data from NOAA and BOM, including solar activity, "
+        "geomagnetic storms, and aurora outlooks. Use the tabs above to view detailed charts, expert data, "
+        "and export management-grade PDFs. See the sidebar for settings and accessibility options."
+    )
 
     st.markdown("""
-    ### Key Metrics Explained
-    - **R scale**: Radio blackout risk due to solar flares
-    - **S scale**: Solar radiation storms
-    - **G scale**: Geomagnetic storm risk (Kp index)
-    - **Aurora**: Visibility/disruption risk from BOM
-    """)
+### Key Metrics Explained
+- **R scale**: Radio blackout risk due to solar flares  
+- **S scale**: Solar radiation storms  
+- **G scale**: Geomagnetic storm risk (Kp index)  
+- **Aurora**: Visibility/disruption risk from BOM
+""")
+
     st.markdown("### Data Sources")
-    st.markdown("- NOAA SWPC feeds\n- BOM Aurora API")
+    st.markdown(
+        "- NOAA Space Weather Prediction Center (SWPC) feeds  \n"
+        "  <https://www.swpc.noaa.gov/>  \n"
+        "- Australian Bureau of Meteorology (BOM) Space Weather Service (SWS) / Aurora API  \n"
+        "  <https://www.sws.bom.gov.au/>"
+    )
+
+    st.markdown("### Credits & Attribution")
+    st.markdown(
+        "This application acknowledges and thanks the following organisations for their public data and services:\n\n"
+        "- **National Oceanic and Atmospheric Administration (NOAA)** — "
+        "[Space Weather Prediction Center (SWPC)](https://www.swpc.noaa.gov/)\n"
+        "- **Australian Bureau of Meteorology (BOM)** — "
+        "[Space Weather Service (SWS)](https://www.sws.bom.gov.au/)\n\n"
+        "Data are used under each provider’s respective terms of use and availability."
+    )
+
     st.markdown("### Accessibility")
     st.markdown("High-contrast and text-only modes available. All metrics and charts include ARIA labels.")
+
     st.markdown("### Feedback")
-    st.markdown("For feature requests or bug reports, please submit an issue on [GitHub](https://github.com/novellgeek/space-weather/issues).")
+    st.markdown(
+        "For feature requests or bug reports, please submit an issue on "
+        "[GitHub](https://github.com/novellgeek/space-weather/issues)."
+    )
+    
+    st.caption(f"Last updated: {last_updated()} (NOAA & BOM data refresh every 10 minutes)")
+
+
 
 # ========== Footer ==========
 st.caption(f"Server time: {last_updated()}  •  Refresh page to update feeds.")
