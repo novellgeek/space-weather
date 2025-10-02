@@ -129,10 +129,10 @@ def _nz_risk_phrase(kind: str, level: str) -> str:
     suffix = "--I Have Spoken"
     if kind == "R":
         return {
-            "ok": "HF comms across NZ should be fine." + suffix,
-            "caution": "Short HF dropouts are possible, mainly sunlit side; most NZ circuits OK." + suffix,
-            "watch": "Heightened risk of HF and GNSS disruption across NZ, esp. midday paths."+ suffix,
-            "severe": "Significant HF and GNSS disruption likely across NZ and the Pacific."+ suffix
+            "ok": "HF comms across NZ should be fine." ,
+            "caution": "Short HF dropouts are possible, mainly sunlit side; most NZ circuits OK." ,
+            "watch": "Heightened risk of HF and GNSS disruption across NZ, esp. midday paths.",
+            "severe": "Significant HF and GNSS disruption likely across NZ and the Pacific."
         }[level]
     if kind == "S":
         return {
