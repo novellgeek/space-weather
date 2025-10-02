@@ -647,23 +647,7 @@ with tab_overview:
     structured_disc, noaa_discussion_src, _raw = get_noaa_forecast_text()
     src_note = noaa_discussion_src.split('/')[-1] if noaa_discussion_src else 'unavailable'
 
-    # ----------------- 1) IMPACT (Next 24 h) — now at the top -----------------
-    levels = _impact_level(current, day1)
-    st.markdown("### Impact (Next 24 h)")
-    im = ["<div class='impact'>",
-          "<div class='hdr'>Domain</div>",
-          "<div class='hdr'>HF Comms</div>",
-          "<div class='hdr'>GNSS</div>",
-          "<div class='hdr'>Power (GIC)</div>",
-          "<div class='hdr'>Radiation / Polar</div>",
-          "<div><strong>Status</strong></div>",
-          f"<div>{_impact_tag(levels['HF Comms'])}</div>",
-          f"<div>{_impact_tag(levels['GNSS'])}</div>",
-          f"<div>{_impact_tag(levels['Power (GIC)'])}</div>",
-          f"<div>{_impact_tag(levels['Radiation / Polar'])}</div>",
-          "</div>"]
-    st.markdown("".join(im), unsafe_allow_html=True)
-    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
+
 
 
     # ----------------- 2) Past/Current + Day 1–3 cards -----------------
@@ -812,6 +796,24 @@ with tab_overview:
         st.markdown("#### Geospace (NZ)")
         st.info(rewrite_to_nz("geospace", gs_full,
                               r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1))
+
+    # ----------------- 1) IMPACT (Next 24 h) — now at the top -----------------
+    levels = _impact_level(current, day1)
+    st.markdown("### Impact (Next 24 h)")
+    im = ["<div class='impact'>",
+          "<div class='hdr'>Domain</div>",
+          "<div class='hdr'>HF Comms</div>",
+          "<div class='hdr'>GNSS</div>",
+          "<div class='hdr'>Power (GIC)</div>",
+          "<div class='hdr'>Radiation / Polar</div>",
+          "<div><strong>Status</strong></div>",
+          f"<div>{_impact_tag(levels['HF Comms'])}</div>",
+          f"<div>{_impact_tag(levels['GNSS'])}</div>",
+          f"<div>{_impact_tag(levels['Power (GIC)'])}</div>",
+          f"<div>{_impact_tag(levels['Radiation / Polar'])}</div>",
+          "</div>"]
+    st.markdown("".join(im), unsafe_allow_html=True)
+    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
 
     # ----------------- 4) NOAA 24-hour Summaries (Raw text) -----------------
     st.markdown("### NOAA 24-hour Summaries (Raw text)")
