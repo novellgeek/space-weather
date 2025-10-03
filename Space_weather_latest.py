@@ -6,7 +6,7 @@
 import os
 import base64
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import tempfile
 
 import plotly.graph_objects as go
@@ -21,30 +21,9 @@ from streamlit.components.v1 import html
 st.set_page_config(page_title="Space Weather Dashboard", layout="wide")
 UA = {"User-Agent": "SpaceWeatherDashboard/4.0 (+streamlit)"}
 
-# ---------- BOM Aurora API ----------
-try:
-    from pyspaceweather import SpaceWeather
-    HAVE_BOM = True
-except Exception as e:
-    HAVE_BOM = False
-    BOM_ERR = f"pyspaceweather unavailable: {e}"
 
-BOM_API_KEY = os.getenv("BOM_API_KEY", "").strip()
-# --- DEVELOPMENT ONLY: Hardcoded BOM key (replace in prod) ---
-if not BOM_API_KEY:
-    BOM_API_KEY = "enert bom api"  # TODO: replace for your environment
 # -------------------------------------------------------------
 
-if HAVE_BOM and BOM_API_KEY:
-    try:
-        bom = SpaceWeather(BOM_API_KEY)
-    except Exception as e:
-        bom = None
-        BOM_ERR = f"pyspaceweather init failed: {e}"
-else:
-    bom = None
-    if HAVE_BOM and not BOM_API_KEY:
-        BOM_ERR = "BOM_API_KEY env var not set"
 
 # ========== Sidebar: Settings ==========
 with st.sidebar:
@@ -57,13 +36,7 @@ with st.sidebar:
     font_scale = st.slider("Font scale", 1.0, 1.6, 1.2, 0.05)
     label_style = st.selectbox("Badge label style", ["Text + Color (default)", "Text-only"])
     st.markdown("### BOM API Status")
-    if bom:
-        st.success("BOM aurora enabled.")
-    else:
-        st.info("BOM aurora disabled.")
-        if 'BOM_ERR' in globals() and BOM_ERR:
-            st.caption(BOM_ERR)
-        st.caption("To enable: export BOM_API_KEY in your environment.")
+    
 
 # ========== Helper functions ==========
 @st.cache_data(ttl=600, show_spinner=True)
@@ -682,23 +655,7 @@ with tab_overview:
     structured_disc, noaa_discussion_src, _raw = get_noaa_forecast_text()
     src_note = noaa_discussion_src.split('/')[-1] if noaa_discussion_src else 'unavailable'
 
-    # ----------------- 1) IMPACT (Next 24 h) — unchanged layout -----------------
-    levels = _impact_level(current, day1)
-    st.markdown("### Impact (Next 24 h)")
-    im = ["<div class='impact'>",
-          "<div class='hdr'>Domain</div>",
-          "<div class='hdr'>HF Comms</div>",
-          "<div class='hdr'>GNSS</div>",
-          "<div class='hdr'>Power (GIC)</div>",
-          "<div class='hdr'>Radiation / Polar</div>",
-          "<div><strong>Status</strong></div>",
-          f"<div>{_impact_tag(levels['HF Comms'])}</div>",
-          f"<div>{_impact_tag(levels['GNSS'])}</div>",
-          f"<div>{_impact_tag(levels['Power (GIC)'])}</div>",
-          f"<div>{_impact_tag(levels['Radiation / Polar'])}</div>",
-          "</div>"]
-    st.markdown("".join(im), unsafe_allow_html=True)
-    st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)
+    
 
     # ----------------- Tone mapping to match NOAA/Forecast -----------------
     def _tone_from_label(label_text: str) -> str:
@@ -844,18 +801,49 @@ with tab_overview:
 
     st.markdown("### New Zealand Plain-English Summaries")
     c1, c2, c3 = st.columns(3)
+
+    FOOTER_NZ = "\n\n**I have Spoken**"
+
     with c1:
         st.markdown("#### Solar Activity (NZ)")
-        st.info(rewrite_to_nz("solar_activity", sa_full,
-                              r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1))
+        st.info(
+            rewrite_to_nz("solar_activity", sa_full,
+                          r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1)
+            + FOOTER_NZ
+        )
+
     with c2:
         st.markdown("#### Solar Wind (NZ)")
-        st.info(rewrite_to_nz("solar_wind", sw_full,
-                              r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1))
+        st.info(
+            rewrite_to_nz("solar_wind", sw_full,
+                          r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1)
+            + FOOTER_NZ
+        )
+
     with c3:
         st.markdown("#### Geospace (NZ)")
-        st.info(rewrite_to_nz("geospace", gs_full,
-                              r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1))
+        st.info(
+            rewrite_to_nz("geospace", gs_full,
+                          r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1)
+            + FOOTER_NZ
+        )
+    # ----------------- 1) IMPACT (Next 24 h) — unchanged layout -----------------
+    levels = _impact_level(current, day1)
+    st.markdown("### Impact (Next 24 h)")
+    im = ["<div class='impact'>",
+          "<div class='hdr'>Domain</div>",
+          "<div class='hdr'>HF Comms</div>",
+          "<div class='hdr'>GNSS</div>",
+          "<div class='hdr'>Power (GIC)</div>",
+          "<div class='hdr'>Radiation / Polar</div>",
+          "<div><strong>Status</strong></div>",
+          f"<div>{_impact_tag(levels['HF Comms'])}</div>",
+          f"<div>{_impact_tag(levels['GNSS'])}</div>",
+          f"<div>{_impact_tag(levels['Power (GIC)'])}</div>",
+          f"<div>{_impact_tag(levels['Radiation / Polar'])}</div>",
+          "</div>"]
+    st.markdown("".join(im), unsafe_allow_html=True)
+    st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)    
 
     # ----------------- 4) NOAA 24-hour Summaries (Raw text) -----------------
     st.markdown("### NOAA 24-hour Summaries (Raw text)")
@@ -1296,22 +1284,482 @@ with tab_forecast:
 
 
 
-# ========== Aurora Tab ==========
+# ========== Aurora Tab (self-contained; hard-coded BOM key) ==========
 with tab_aurora:
-    # Only show BOM Aurora content (no NOAA forecast)
-    bom_aurora_text = get_bom_aurora()
+    st.markdown("## Aurora (BOM Australia Region)")
 
-    st.markdown("## Aurora (BOM)")
+    # ---------- Local config (HARD-CODED KEY) ----------
+    _BOM_API_KEY = "51585962-2fdd-4cf5-9d9e-74cdd09e3bab"  # your BOM SWS API key
+    _BOM_BASE_URL = "https://sws-data.sws.bom.gov.au/api/v1/"
 
-    st.markdown("""
-    <div class='section' role='region' aria-label='BOM Aurora'>
-      <div class='subttl'>BOM Aurora</div>
-      <div style='white-space:pre-line;color:#cfe3ff;margin-top:.5rem;'>%s</div>
-    </div>
-    """ % (bom_aurora_text or "No aurora alerts/outlooks."),
-    unsafe_allow_html=True)
+    # ---------- Local helpers ----------
+    def _utc_fmt(dt: datetime) -> str:
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    @st.cache_data(ttl=600)
+    def _bom_post(method: str, options: dict | None = None, timeout: int = 20):
+        if not _BOM_API_KEY:
+            st.warning("BOM API key not set.")
+            return None
+        url = f"{_BOM_BASE_URL}{method}"
+        body = {"api_key": _BOM_API_KEY}
+        if options:
+            body["options"] = options
+        try:
+            r = requests.post(url, json=body, timeout=timeout)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            st.warning(f"BOM API error calling {method}: {e}")
+            return None
+
+    def _bom_when(d: dict) -> str:
+        for k in ("issued", "datetime", "timestamp", "issue_time", "time"):
+            if d and d.get(k):
+                return str(d[k])
+        return ""
+
+    # ----- Aurora text banner (Outlook/Watch/Alert) -----
+    def _bom_aurora_section():
+        def _first(payload, keys=("description","comments","text")):
+            items = (payload.get("data") or []) if isinstance(payload, dict) else []
+            if not items: return None, None
+            top = items[0] or {}
+            msg = next((top.get(k) for k in keys if top.get(k)), None)
+            when = _bom_when(top)
+            return msg, when
+
+        outlook = _bom_post("get-aurora-outlook") or {}
+        watch   = _bom_post("get-aurora-watch")   or {}
+        alert   = _bom_post("get-aurora-alert")   or {}
+
+        lines = []
+        for label, payload in [("Aurora Outlook", outlook), ("Aurora Watch", watch), ("Aurora Alert", alert)]:
+            msg, when = _first(payload)
+            if msg:
+                stamp = f" — *{when}*" if when else ""
+                lines.append(f"**{label}:** {msg}{stamp}")
+        if not lines:
+            lines.append("No BOM aurora alerts, watches, or outlooks are currently active for the Australian region.")
+        st.markdown("\n\n".join(lines))
+
+    _bom_aurora_section()
+    st.caption(f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} · Source: BOM Aurora / SWS")
+
+    st.markdown("---")
+
+    # ---------- Controls ----------
+    colc1, colc2, colc3 = st.columns([1.2, 1, 1])
+    with colc1:
+        k_location = st.selectbox(
+            "K-index location (BOM)",
+            ["Australian region", "Hobart", "Canberra", "Learmonth"],
+            index=0,
+            help="‘Australian region’ is the regional K; stations are local K."
+        )
+    with colc2:
+        span = st.selectbox("Time range", ["24 hours", "3 days", "7 days", "30 days"], index=1)
+    with colc3:
+        hemi = st.radio("Hemisphere (oval)", ["Southern", "Northern"], index=0, horizontal=True)
+
+    now = datetime.utcnow().replace(minute=0, second=0, microsecond=0)
+    days = {"24 hours": 1, "3 days": 3, "7 days": 7, "30 days": 30}[span]
+    start_utc = _utc_fmt(now - timedelta(days=days))
+    end_utc   = _utc_fmt(now + timedelta(hours=1))  # small forward buffer
+
+    # ---------- Time series fetchers (BOM) ----------
+    @st.cache_data(ttl=600)
+    # --- Normalise BOM payloads that may be dicts OR lists ---
+ # normalise dict/list payloads
+    def _bom_data(payload):
+        if isinstance(payload, dict):
+            d = payload.get("data")
+            if isinstance(d, list):
+                return d
+            return [payload] if any(k in payload for k in ("index","valid_time","time","date")) else []
+        elif isinstance(payload, list):
+            return payload
+        return []
+
+    @st.cache_data(ttl=600)
+    def _bom_get_k_series(location: str, start: str, end: str):
+        payload = _bom_post("get-k-index", {"location": location, "start": start, "end": end}) or []
+        data = _bom_data(payload)
+        out = [{"time": str(d.get("valid_time") or d.get("time")), "k": int(d.get("index"))}
+               for d in data if isinstance(d, dict) and d.get("index") is not None and (d.get("valid_time") or d.get("time"))]
+        if not out:
+            # fallback to latest
+            latest = _bom_post("get-k-index", {"location": location}) or []
+            data2 = _bom_data(latest)
+            out = [{"time": str(d.get("valid_time") or d.get("time")), "k": int(d.get("index"))}
+                   for d in data2 if isinstance(d, dict) and d.get("index") is not None and (d.get("valid_time") or d.get("time"))]
+        return out
+
+    @st.cache_data(ttl=600)
+    def _bom_get_a_series(start: str, end: str):
+        # A-index is DAILY and keyed to 00:00 UTC — range must span midnights
+        payload = _bom_post("get-a-index", {"location": "Australian region", "start": start, "end": end}) or []
+        data = _bom_data(payload)
+        out = [{"date": str(d.get("valid_time") or d.get("date"))[:10], "a": int(d.get("index"))}
+               for d in data if isinstance(d, dict) and d.get("index") is not None]
+        if not out:
+            # fallback to latest daily A
+            latest = _bom_post("get-a-index", {"location": "Australian region"}) or []
+            data2 = _bom_data(latest)
+            out = [{"date": str(d.get("valid_time") or d.get("date"))[:10], "a": int(d.get("index"))}
+                   for d in data2 if isinstance(d, dict) and d.get("index") is not None]
+        return out
+
+    @st.cache_data(ttl=600)
+    def _bom_get_dst_series(start: str, end: str):
+        payload = _bom_post("get-dst-index", {"location": "Australian region", "start": start, "end": end}) or []
+        data = _bom_data(payload)
+        out = [{"time": str(d.get("valid_time") or d.get("time")), "dst": int(d.get("index"))}
+               for d in data if isinstance(d, dict) and d.get("index") is not None and (d.get("valid_time") or d.get("time"))]
+        if not out:
+            # fallback to latest Dst point
+            latest = _bom_post("get-dst-index", {"location": "Australian region"}) or []
+            data2 = _bom_data(latest)
+            out = [{"time": str(d.get("valid_time") or d.get("time")), "dst": int(d.get("index"))}
+                   for d in data2 if isinstance(d, dict) and d.get("index") is not None and (d.get("valid_time") or d.get("time"))]
+        return out
+
+
+
+    # ---------- Fetch data (these names must match the function signatures above) ----------
+    k_series   = _bom_get_k_series(k_location, start_utc, end_utc)
+    a_series   = _bom_get_a_series(start_utc, end_utc)
+    dst_series = _bom_get_dst_series(start_utc, end_utc)
+
+    # ---------- Charts ----------
+    st.markdown("### BOM Indices")
+    c1, c2 = st.columns(2)
+
+    # K-index (bar)
+    with c1:
+        if k_series:
+            times = [d["time"] for d in k_series]
+            vals  = [d["k"] for d in k_series]
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=times, y=vals, name=f"K — {k_location}"))
+            cols = []
+            for k in vals:
+                if k < 5: cols.append("limegreen")
+                elif k == 5: cols.append("gold")
+                elif k == 6: cols.append("orange")
+                else: cols.append("red")
+            fig.update_traces(marker_color=cols)
+            fig.update_layout(title=f"BOM K-index — {k_location}",
+                              xaxis_title="UTC time", yaxis_title="K",
+                              height=320, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No K-index data available for the selected range.")
+
+    # A-index (line)
+    with c2:
+        if a_series:
+            dates = [d["date"] for d in a_series]
+            avals = [d["a"] for d in a_series]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=dates, y=avals, mode="lines+markers", name="A"))
+            fig.update_layout(title="BOM A-index (daily)",
+                              xaxis_title="Date (UTC)", yaxis_title="A",
+                              height=320, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No A-index data available for the selected range.")
+
+    # Dst (line)
+    st.markdown("### Storm-time Index (Dst)")
+    if dst_series:
+        times = [d["time"] for d in dst_series]
+        dstv  = [d["dst"] for d in dst_series]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=times, y=dstv, mode="lines", name="Dst"))
+        fig.update_layout(title="Dst (BOM)",
+                          xaxis_title="UTC time", yaxis_title="Dst (nT)",
+                          height=320, showlegend=False)
+        fig.add_shape(type="line", x0=times[0] if times else 0, x1=times[-1] if times else 1,
+                      y0=0, y1=0, line=dict(width=1))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No Dst data available for the selected range.")
+
+    # ---------- Simple “Ovation-style” oval (approximate) ----------
+    # --- NOAA OVATION (official) ---
+    # --- NOAA OVATION (official) ---
+    st.markdown("### NOAA OVATION — 30-Minute Forecast (official)")
+
+    @st.cache_data(ttl=300)  # cache 5 minutes
+    def _ovation_image_url(hemisphere: str = "south") -> str:
+        return ("https://services.swpc.noaa.gov/images/aurora-forecast-northern-hemisphere.jpg"
+                if hemisphere == "north"
+                else "https://services.swpc.noaa.gov/images/aurora-forecast-southern-hemisphere.jpg")
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _fetch_image_bytes(url: str):
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        return r.content
+
+    _ov_hemi = "north" if hemi == "Northern" else "south"
+    _url = _ovation_image_url(_ov_hemi)
+
+    try:
+        img_bytes = _fetch_image_bytes(_url)
+        OVATION_WIDTH = 720  # tweak as you like
+        left, mid, right = st.columns([1, 3, 1])
+        with mid:
+            st.image(
+            img_bytes,
+            caption=f"NOAA SWPC OVATION — {_ov_hemi.title()}ern Hemisphere (latest)",
+            width=OVATION_WIDTH,    # << fixed width
+    )
+        st.caption("Source: NOAA/NWS SWPC — Aurora 30-Minute Forecast")
+    except Exception as e:
+        st.warning(f"Could not load OVATION image: {e}")
+
+
+    st.caption(f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} · Source: BOM SWS API")
     
-    st.caption(f"Last updated: {last_updated()} · Source: BOM Aurora / SWS")
+    # ---------- NZ OVATION heatmap (interactive) ----------
+# Uses: fetch_json (already defined), numpy, plotly (already imported)
+# Crops to: 140°E .. 170°W (i.e., 140..190 in 0–359), and 60°S .. 20°S (-60..-20)
+
+st.markdown("### OVATION — NZ Window (interactive)")
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _ovation_grid():
+    # SWPC OVATION JSON: coordinates -> [[lon, lat, prob], ...]
+    url = "https://services.swpc.noaa.gov/json/ovation_aurora_latest.json"
+    data = fetch_json(url)
+    if not data or "coordinates" not in data:
+        return None, None, None, None
+    coords = data["coordinates"]
+    arr = np.array(coords, dtype=float)  # [N, 3] = [lon, lat, prob%]
+    # reshape into 2D: 181 rows (lat -90..90), 360 cols (lon 0..359)
+    grid = np.reshape(arr[:, 2], (181, 360), order="F")
+    lats = np.linspace(-90, 90, 181)
+    lons = np.arange(0, 360)
+    ts = data.get("Forecast Time", "")
+    return grid, lats, lons, ts
+
+grid, lats, lons, ts = _ovation_grid()
+
+if grid is None:
+    st.warning("OVATION JSON unavailable right now.")
+else:
+    # Crop to NZ window
+    lon_min, lon_max = 140, 190      # 140°E .. 170°W (wrapped as 190)
+    lat_min, lat_max = -60, -20      # 60°S .. 20°S
+
+    lat_mask = (lats >= lat_min) & (lats <= lat_max)
+    lon_mask = (lons >= lon_min) & (lons <= lon_max)
+
+    sub = grid[lat_mask][:, lon_mask]
+    sub_lats = lats[lat_mask]
+    sub_lons = lons[lon_mask]
+
+    # Optional UI: show only stronger probabilities
+    clip_min = st.slider("Show probabilities ≥ (%)", 0, 50, 5, 1)
+    sub_plot = np.where(sub >= clip_min, sub, np.nan)
+
+    # Plotly heatmap (pan/zoom enabled)
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=sub_plot,
+            x=sub_lons,
+            y=sub_lats,
+            colorbar=dict(title="Aurora %"),
+            hovertemplate="Lon %{x}°, Lat %{y}°<br>%{z:.0f}%<extra></extra>",
+            zmin=0, zmax=100,
+            colorscale="Turbo"    # vivid green→yellow→red; tweak if you prefer
+        )
+    )
+    fig.update_layout(
+        height=480,
+        margin=dict(l=10, r=10, t=40, b=10),
+        title=f"NZ / South Pacific window — valid {ts or 'latest'} UTC",
+        xaxis_title="Longitude (°E, 0–359)",
+        yaxis_title="Latitude (°)",
+        xaxis=dict(constrain="domain"),
+        yaxis=dict(scaleanchor=None)  # free aspect so zooming feels natural
+    )
+    # By default, Heatmap places lower y at bottom; our lats ascend (-60→-20), which is what we want.
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.caption("Data: NOAA/NWS SWPC OVATION 30-minute forecast (updated ~5 min). Region: 140°E–170°W, 60°S–20°S.")
+    
+    # ---------- NZ basemap overlay + PNG export ----------
+st.markdown("### OVATION — NZ Basemap (coastlines)")
+
+# UI: point thinning + recenter + export toggle
+thin = st.slider("Point thinning (°)", 1, 6, 2, 1, help="Plot every Nth lon/lat cell to keep it snappy.")
+recenter = st.toggle("Recenter to NZ", value=True)
+enable_export = st.toggle("Enable PNG export", value=False, help="Generates a transparent PNG (needs kaleido)")
+
+if grid is None:
+    st.info("OVATION JSON unavailable for basemap right now.")
+else:
+    # Reuse the same cropped window you used for the heatmap
+    lon_min, lon_max = 140, 190      # 140°E .. 170°W (wrapped to 190)
+    lat_min, lat_max = -60, -20
+
+    lat_mask = (lats >= lat_min) & (lats <= lat_max)
+    lon_mask = (lons >= lon_min) & (lons <= lon_max)
+    sub = grid[lat_mask][:, lon_mask]
+    sub_lats = lats[lat_mask]
+    sub_lons = lons[lon_mask]
+
+    # Use same clip as heatmap if you defined it; otherwise provide one
+    clip_min2 = clip_min if "clip_min" in locals() else 5
+    z = np.where(sub >= clip_min2, sub, np.nan)
+
+    # Build lon/lat mesh and thin
+    LON, LAT = np.meshgrid(sub_lons, sub_lats)
+    # Convert 0..359 longitudes to -180..180 for geo plotting
+    LON180 = np.where(LON > 180, LON - 360, LON)
+
+    # Flatten + mask finite points
+    mask = np.isfinite(z)
+    lon_pts = LON180[mask][::thin]
+    lat_pts = LAT[mask][::thin]
+    val_pts = z[mask][::thin]
+
+    # Scattergeo with colorbar = true heat overlay on a coastlined basemap
+    fig_geo = go.Figure()
+    fig_geo.add_trace(go.Scattergeo(
+        lon=lon_pts,
+        lat=lat_pts,
+        mode="markers",
+        marker=dict(
+            size=4,
+            color=val_pts,
+            cmin=0, cmax=100,
+            colorscale="Turbo",
+            colorbar=dict(title="Aurora %")
+        ),
+        hovertemplate="Lon %{lon:.1f}°, Lat %{lat:.1f}°<br>%{marker.color:.0f}%<extra></extra>",
+        name="OVATION"
+    ))
+
+    # Layout with coastlines; optional recenter around NZ (≈174°E, 41°S)
+    fig_geo.update_layout(
+        title=f"NZ / South Pacific basemap — valid {ts or 'latest'} UTC",
+        height=520,
+        margin=dict(l=10, r=10, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        geo=dict(
+            projection=dict(type="natural earth", rotation=dict(lon=174 if recenter else 0)),
+            lataxis=dict(range=[lat_min, lat_max]),
+            # Leaving lonaxis range unset avoids dateline-wrapping glitches; rotation recenters view.
+            showcoastlines=True, coastlinecolor="#9ec5ff",
+            showland=True, landcolor="rgb(30,40,50)",
+            showocean=True, oceancolor="rgb(10,20,30)",
+            showcountries=True, countrycolor="rgba(255,255,255,0.35)",
+            bgcolor="rgba(0,0,0,0)"
+        )
+    )
+
+    st.plotly_chart(fig_geo, use_container_width=True)
+
+    # Optional: export transparent PNG for PDF use
+    if enable_export:
+        try:
+            import plotly.io as pio
+            png_bytes = pio.to_image(
+                fig_geo, format="png", width=1200, height=700, scale=2, engine="kaleido"
+            )
+            st.download_button(
+                "⬇️ Download NZ OVATION basemap (PNG)",
+                data=png_bytes,
+                file_name="ovation_nz_basemap.png",
+                mime="image/png",
+            )
+            st.caption("PNG has a transparent background for clean placement in your PDF.")
+        except Exception as e:
+            st.warning(f"PNG export requires Kaleido. Install with: pip install -U kaleido  (error: {e})")
+
+
+    
+    # ---------- New Zealand twist (local time + city chips) ----------
+
+    from zoneinfo import ZoneInfo  # top-level import recommended
+
+    def _approx_kp_from_k(k_val: int | float) -> float:
+        # Simple 1:1 mapping is OK for quick ops use here
+        try:
+            return max(0.0, min(9.0, float(k_val)))
+        except Exception:
+            return 0.0
+
+    # Pull latest K from the BOM K series you already fetched
+    _latest_k = (k_series[-1]["k"] if k_series else None)
+    _est_kp   = _approx_kp_from_k(_latest_k) if _latest_k is not None else None
+
+    # NZ local time + quick night flag (coarse but useful)
+    _now_nz = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Pacific/Auckland"))
+    _is_night_nz = _now_nz.hour >= 18 or _now_nz.hour < 6
+
+    # City thresholds (rough, ops-friendly heuristics)
+    # Tweak these if you like; they’re commonly used field guide levels.
+    _city_min_kp = [
+        ("Southland (Invercargill)", 5.0),
+        ("Otago (Dunedin)",           6.0),
+        ("Canterbury (Christchurch)", 6.0),
+        ("Wellington",                7.0),
+        ("Auckland",                  8.0),
+    ]
+
+    def _chip(label: str, tone: str) -> str:
+        # tones: ok|caution|watch (reuse your existing CSS if present)
+        color = {"ok":"#22c55e", "caution":"#f59e0b", "watch":"#ef4444"}[tone]
+        bg    = {"ok":"rgba(34,197,94,.12)", "caution":"rgba(245,158,11,.12)", "watch":"rgba(239,68,68,.12)"}[tone]
+        return f"<span style='display:inline-block;padding:.12rem .55rem;border-radius:999px;border:2px solid {color};background:{bg};font-weight:700;font-size:.85rem;color:{color};'>{label}</span>"
+
+    st.markdown("### New Zealand — Quick Look")
+
+    # Header row: local time + night/day + K/Kp readout
+    _kp_txt = f"~Kp≈{_est_kp:.1f}" if _est_kp is not None else "Kp n/a"
+    _k_txt  = f"K={_latest_k}" if _latest_k is not None else "K n/a"
+    _night  = "Night" if _is_night_nz else "Day"
+
+    st.markdown(
+        f"<div style='display:flex;gap:.6rem;flex-wrap:wrap;'>"
+        f"{_chip('NZT: ' + _now_nz.strftime('%Y-%m-%d %H:%M'), 'ok')}"
+        f"{_chip(_night, 'caution' if not _is_night_nz else 'ok')}"  # <-- use _night
+        f"{_chip(_k_txt, 'ok')}"
+        f"{_chip(_kp_txt, 'ok')}"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    # City chips: show "Now" if likely visible given current Kp AND it’s night in NZ
+    chips = []
+    for name, kp_min in _city_min_kp:
+        if _est_kp is None:
+            chips.append(_chip(f"{name}: needs Kp≥{kp_min:.0f}", "caution"))
+        else:
+            if _est_kp >= kp_min and _is_night_nz:
+                chips.append(_chip(f"{name}: Now (Kp≥{kp_min:.0f})", "ok"))
+            elif _est_kp >= kp_min and not _is_night_nz:
+                chips.append(_chip(f"{name}: Nighttime (Kp≥{kp_min:.0f})", "caution"))
+            else:
+                chips.append(_chip(f"{name}: Kp≥{kp_min:.0f}", "watch"))
+
+    st.markdown(
+        "<div style='margin-top:.5rem;display:flex;gap:.45rem;flex-wrap:wrap;'>"
+        + "".join(chips) +
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+st.caption("Heuristic guide only: thresholds are approximate and assume clear skies + dark conditions.")
+
+
+
 
 
 
@@ -1457,7 +1905,7 @@ with tab_pdf:
     three = get_3day_summary()
     day1 = three["days"][0]
     next24 = get_next24_summary()
-    bom_aurora_text = get_bom_aurora()
+    #bom_aurora_text = get_bom_aurora()
     structured_disc, noaa_discussion_src, noaa_discussion_raw = get_noaa_forecast_text()
     narrative_flags = detect_r_s_watch_flags(structured_disc)  # NEW
     summary_text = make_summary(current, next24)
