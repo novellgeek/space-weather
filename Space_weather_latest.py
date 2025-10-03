@@ -125,33 +125,32 @@ def _any(txt: str, *phrases) -> bool:
     return any(p in low for p in phrases)
 
 def _nz_risk_phrase(kind: str, level: str) -> str:
-    # Mandalorian quote appended to every NZ risk phrase
-    suffix = "--I Have Spoken"
     if kind == "R":
         return {
-            "ok": "HF comms across NZ should be fine." ,
-            "caution": "Short HF dropouts are possible, mainly sunlit side; most NZ circuits OK." ,
+            "ok": "HF comms across NZ should be fine.",
+            "caution": "Short HF dropouts are possible, mainly sunlit side; most NZ circuits OK.",
             "watch": "Heightened risk of HF and GNSS disruption across NZ, esp. midday paths.",
             "severe": "Significant HF and GNSS disruption likely across NZ and the Pacific."
         }[level]
     if kind == "S":
         return {
             "ok": "Radiation environment normal over NZ.",
-            "caution": "Elevated radiation — minor impacts; commercial flights OK, polar routes more affected."+ suffix,
-            "watch": "High radiation risk for polar operations; monitor aviation/space assets in our region."+ suffix,
-            "severe": "Severe radiation storm — restrict high-latitude ops; protect space assets."+ suffix
+            "caution": "Elevated radiation — minor impacts; commercial flights OK, polar routes more affected.",
+            "watch": "High radiation risk for polar operations; monitor aviation/space assets in our region.",
+            "severe": "Severe radiation storm — restrict high-latitude ops; protect space assets."
         }[level]
     return {
         "ok": "Geomagnetic field quiet; GNSS is stable across NZ.",
-        "caution": "Field unsettled — small GNSS accuracy dips possible; slim aurora chance in Southland."+ suffix,
-        "watch": "Storm conditions — GNSS accuracy can degrade at times; good aurora odds in the deep south."+ suffix,
-        "severe": "Severe storm — GNSS, HF, and power systems may be impacted; widespread aurora possible." + suffix
+        "caution": "Field unsettled — small GNSS accuracy dips possible; slim aurora chance in Southland.",
+        "watch": "Storm conditions — GNSS accuracy can degrade at times; good aurora odds in the deep south.",
+        "severe": "Severe storm — GNSS, HF, and power systems may be impacted; widespread aurora possible."
     }[level]
 
 def _class_to_level(cls_key: str) -> str:
     m = {"ok":"ok","caution":"caution","watch":"watch","severe":"severe"}
     return m.get((cls_key or "").lower(), "ok")
 
+# --- FIND THIS FUNCTION ---
 def rewrite_to_nz(section: str, text: str, *,
                   r_now="R0", s_now="S0", g_now="G0",
                   day1=None) -> str:
@@ -189,26 +188,24 @@ def rewrite_to_nz(section: str, text: str, *,
             else:
                 base = "Radiation environment looks normal for NZ operations."
 
-    r_cls = _r_class(r_now)
-    s_cls = _s_class(s_now)
-    g_cls = _g_class(g_now)
+    # Choose ONLY the relevant risk line for this section
+    if section == "solar_activity":
+        r_cls = _r_class(r_now)
+        main_risk = _nz_risk_phrase("R", _class_to_level(r_cls))
+        return f"{base}{_NZ_REGIONAL_HINT}\n• {main_risk}"
+    elif section == "solar_wind":
+        s_cls = _s_class(s_now)
+        main_risk = _nz_risk_phrase("S", _class_to_level(s_cls))
+        return f"{base}{_NZ_REGIONAL_HINT}\n• {main_risk}"
+    elif section == "geospace":
+        g_cls = _g_class(g_now)
+        main_risk = _nz_risk_phrase("G", _class_to_level(g_cls))
+        return f"{base}{_NZ_REGIONAL_HINT}\n• {main_risk}"
+    else:
+        # fallback: just base (for energetic particle etc)
+        return f"{base}{_NZ_REGIONAL_HINT}"
 
-    r_line = _nz_risk_phrase("R", _class_to_level(r_cls))
-    s_line = _nz_risk_phrase("S", _class_to_level(s_cls))
-    g_line = _nz_risk_phrase("G", _class_to_level(g_cls))
-
-    g_hint = ""
-    try:
-        if isinstance(day1, dict):
-            g_day1 = (day1.get("g") or "G0").upper()
-            if g_day1.startswith("G2"):
-                g_hint = " Expect stormy geomagnetic periods — better aurora odds for the deep south."
-            elif g_day1.startswith(("G3","G4","G5")):
-                g_hint = " Storm conditions likely — plan for GNSS variability and stronger aurora potential."
-    except Exception:
-        pass
-
-    return f"{base}{_NZ_REGIONAL_HINT}\n• {r_line}\n• {s_line}\n• {g_line}{g_hint}"
+# --- END PATCH ---
 
 # ========== Narrative fallback detector ==========
 def detect_r_s_watch_flags(structured_disc: dict) -> dict:
@@ -637,8 +634,46 @@ tab_overview, tab_charts, tab_forecast, tab_aurora, tab_expert, tab_pdf, tab_hel
 ])
 
 # ========== Overview Tab ==========
+# ========== Overview Tab ==========
 with tab_overview:
-    st.markdown("## Space Weather Dashboard - Overview")
+    st.markdown("""
+<style>
+  /* Match Forecast tab pill style exactly */
+  .rs-inline { display:flex; gap:1.8rem; align-items:center; flex-wrap:wrap; }
+
+  .rs-pill{
+    display:inline-flex;
+    align-items:center; justify-content:center;
+    padding:.18rem .48rem;                 /* compact like forecast */
+    border-radius:8px;                     /* small rounded corners */
+    font-weight:800; font-size:.95rem;     /* same weight/size as forecast look */
+    line-height:1.1;
+    border:2px solid transparent;
+    background:transparent;
+    letter-spacing:.2px;
+  }
+
+  /* Tone colours (same mapping used in Forecast tab visuals) */
+  .rs-pill.ok{
+    color:#22c55e;                         /* green */
+    border-color:#22c55e;
+    background:rgba(34,197,94,.12);        /* faint fill */
+  }
+  .rs-pill.caution{
+    color:#f59e0b;                         /* amber */
+    border-color:#f59e0b;
+    background:rgba(245,158,11,.12);
+  }
+  .rs-pill.watch{
+    color:#ef4444;                         /* red */
+    border-color:#ef4444;
+    background:rgba(239,68,68,.12);
+  }
+</style>
+""", unsafe_allow_html=True)
+
+
+
 
     # --- data pulls ---
     past, current = get_noaa_rsg_now_and_past()
@@ -647,40 +682,67 @@ with tab_overview:
     structured_disc, noaa_discussion_src, _raw = get_noaa_forecast_text()
     src_note = noaa_discussion_src.split('/')[-1] if noaa_discussion_src else 'unavailable'
 
+    # ----------------- 1) IMPACT (Next 24 h) — unchanged layout -----------------
+    levels = _impact_level(current, day1)
+    st.markdown("### Impact (Next 24 h)")
+    im = ["<div class='impact'>",
+          "<div class='hdr'>Domain</div>",
+          "<div class='hdr'>HF Comms</div>",
+          "<div class='hdr'>GNSS</div>",
+          "<div class='hdr'>Power (GIC)</div>",
+          "<div class='hdr'>Radiation / Polar</div>",
+          "<div><strong>Status</strong></div>",
+          f"<div>{_impact_tag(levels['HF Comms'])}</div>",
+          f"<div>{_impact_tag(levels['GNSS'])}</div>",
+          f"<div>{_impact_tag(levels['Power (GIC)'])}</div>",
+          f"<div>{_impact_tag(levels['Radiation / Polar'])}</div>",
+          "</div>"]
+    st.markdown("".join(im), unsafe_allow_html=True)
+    st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)
 
+    # ----------------- Tone mapping to match NOAA/Forecast -----------------
+    def _tone_from_label(label_text: str) -> str:
+        if not label_text:
+            return "ok"
+        m = re.search(r"(\d+)", label_text)
+        n = int(m.group(1)) if m else 0
+        if n >= 4: return "watch"
+        if n == 3: return "caution"
+        return "ok"
+
+    def _pill(label_text: str) -> str:
+        return f"<span class='rs-pill {_tone_from_label(label_text)}'>{label_text}</span>"
 
 
     # ----------------- 2) Past/Current + Day 1–3 cards -----------------
-    def _pill(txt, severity_cls):
-        return f"<span class='rs-pill {severity_cls}'>{txt}</span>"
-
     def col_block(title, r_tuple, s_tuple, g_tuple, subline_html=""):
-        r_lbl, r_cls = r_tuple
-        s_lbl, s_cls = s_tuple
-        g_lbl, g_cls = g_tuple
+        # Only use labels; tones come from labels to ensure consistency
+        r_lbl, _ = r_tuple
+        s_lbl, _ = s_tuple
+        g_lbl, _ = g_tuple
         return f"""
         <div class="box">
           <h5>{title}</h5>
           <div class="rs-inline">
-            {_pill(r_lbl, r_cls)}
-            {_pill(s_lbl, s_cls)}
-            {_pill(g_lbl, g_cls)}
+            {_pill(r_lbl)}
+            {_pill(s_lbl)}
+            {_pill(g_lbl)}
           </div>
           <div class="subline">{subline_html}</div>
         </div>"""
 
     past_html = col_block(
         "Past 24 hours",
-        (past['r'], _r_class(past['r'])),
-        (past['s'], _s_class(past['s'])),
-        (past['g'], _g_class(past['g'])),
+        (past['r'], _tone_from_label(past['r'])),
+        (past['s'], _tone_from_label(past['s'])),
+        (past['g'], _tone_from_label(past['g'])),
         "Radio blackouts · Radiation storms · Geomagnetic storms"
     )
     curr_html = col_block(
         "Current",
-        (current['r'], _r_class(current['r'])),
-        (current['s'], _s_class(current['s'])),
-        (current['g'], _g_class(current['g'])),
+        (current['r'], _tone_from_label(current['r'])),
+        (current['s'], _tone_from_label(current['s'])),
+        (current['g'], _tone_from_label(current['g'])),
         "Radio blackouts · Radiation storms · Geomagnetic storms"
     )
 
@@ -702,9 +764,8 @@ with tab_overview:
         f"R1–R2: {day2['r12']}% · R3+: {day2['r3']}% · S1+: {day2['s1']}% · Kp≈{day2['kp'] if day2['kp'] is not None else '~'}"
     )
 
+    # Fix: ensure Day 3 uses the correct helpers for S/G (not r_label again)
     r3, r3_cls = r_label_and_class_for_day(day3)
-    s3, s3_cls = r_label_and_class_for_day(day3)[0], s_label_and_class_for_day(day3)[1]  # keep style consistent
-    # (Fix: use s_label_and_class_for_day for S and g_label_and_class_for_day for G)
     s3, s3_cls = s_label_and_class_for_day(day3)
     g3, g3_cls = g_label_and_class_for_day(day3)
     d3_html = col_block(
@@ -724,7 +785,7 @@ with tab_overview:
         if not txt:
             return ""
         lines = [ln.strip() for ln in txt.replace("\r", "").split("\n")]
-        keep = [ln for ln in lines if ln and not ln.startswith(":") and "Prepared by" not in ln]
+        keep = [ln for ln in lines if ln and not ln.startswith(':') and "Prepared by" not in ln]
         out = " ".join(keep).strip()
         return re.sub(r"\s{2,}", " ", out)
 
@@ -776,7 +837,6 @@ with tab_overview:
         return {"solar_activity": sa or "—", "solar_wind": sw or "—", "geospace": gs or "—"}
 
     # ----------------- 3) NZ plain-English summaries -----------------
-    # Build text for NZ rewrite (use the robust 24h pulls for better context)
     direct_24h = get_noaa_24h_summaries_direct()
     sa_full = direct_24h["solar_activity"]
     sw_full = direct_24h["solar_wind"]
@@ -797,24 +857,6 @@ with tab_overview:
         st.info(rewrite_to_nz("geospace", gs_full,
                               r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1))
 
-    # ----------------- 1) IMPACT (Next 24 h) — now at the top -----------------
-    levels = _impact_level(current, day1)
-    st.markdown("### Impact (Next 24 h)")
-    im = ["<div class='impact'>",
-          "<div class='hdr'>Domain</div>",
-          "<div class='hdr'>HF Comms</div>",
-          "<div class='hdr'>GNSS</div>",
-          "<div class='hdr'>Power (GIC)</div>",
-          "<div class='hdr'>Radiation / Polar</div>",
-          "<div><strong>Status</strong></div>",
-          f"<div>{_impact_tag(levels['HF Comms'])}</div>",
-          f"<div>{_impact_tag(levels['GNSS'])}</div>",
-          f"<div>{_impact_tag(levels['Power (GIC)'])}</div>",
-          f"<div>{_impact_tag(levels['Radiation / Polar'])}</div>",
-          "</div>"]
-    st.markdown("".join(im), unsafe_allow_html=True)
-    st.markdown("<div style='height: 40px;'></div>", unsafe_allow_html=True)
-
     # ----------------- 4) NOAA 24-hour Summaries (Raw text) -----------------
     st.markdown("### NOAA 24-hour Summaries (Raw text)")
     c1, c2, c3 = st.columns(3)
@@ -829,241 +871,219 @@ with tab_overview:
         st.markdown(gs_full.replace("\n", "<br>"), unsafe_allow_html=True)
 
 
-
-
-
-
-
 # ========== Charts Tab ==========
 with tab_charts:
-    st.markdown("## Space Weather Analytics (Two Columns)")
+    st.markdown("## Space Weather Analytics (NOAA Style)")
 
     time_ranges = {
-        "Last 6h": 6*12,       # assuming 5 min intervals
-        "Last 24h": 24*12,
-        "Full record": None
+        "6 Hour": 72,
+        "1 Day": 288,
+        "3 Day": 864,
+        "7 Day": 2016
     }
-    selected_range = st.selectbox("Select time range", list(time_ranges.keys()))
-    smooth = st.checkbox("Apply 1-hour moving average", value=True)
+    st.markdown("### Select Time Range for All Charts")
+    selected_range = st.radio("Time Range", list(time_ranges.keys()), index=3, horizontal=True)  # Default: "7 Day"
+    count = time_ranges[selected_range]
 
-    def stats_block(times, vals, label, threshold=None):
-        if vals is None or len(vals) == 0:
-            return ""
-        arr = np.array(vals)
-        current_val = arr[-1]
-        avg = np.mean(arr)
-        std = np.std(arr)
-        minv = np.min(arr)
-        maxv = np.max(arr)
-        trend = "↗️ rising" if arr[-1] > arr[0] else ("↘️ falling" if arr[-1] < arr[0] else "⏸️ flat")
-        alert = ""
-        if threshold is not None and current_val > threshold:
-            alert = f"**ALERT: {label} above threshold ({threshold})!**"
-        st.markdown(f"""
-        **{label} Stats:**  
-        - Current: `{current_val:.2e}`  
-        - Mean: `{avg:.2e}`  
-        - Std Dev: `{std:.2e}`  
-        - Min: `{minv:.2e}`  
-        - Max: `{maxv:.2e}`  
-        - Trend: {trend}  
-        {alert}
-        """)
-
-    col1, col2 = st.columns(2)
-
-    # ------------- COLUMN 1 -------------
-    with col1:
-        st.markdown("### Differential Electrons (1-day)")
-        url = "https://services.swpc.noaa.gov/json/goes/primary/differential-electrons-1-day.json"
+    def plot_kp_index():
+        url = "https://services.swpc.noaa.gov/json/planetary_k_index_1m.json"
         data = fetch_json(url)
-        if data and isinstance(data, list):
-            times = [row.get("time_tag") for row in data if "time_tag" in row]
-            fluxes = [row.get("flux", 0) for row in data]
-            if time_ranges[selected_range]:
-                times = times[-time_ranges[selected_range]:]
-                fluxes = fluxes[-time_ranges[selected_range]:]
-            if smooth and len(fluxes) > 12:
-                fluxes = uniform_filter1d(fluxes, size=12)
-            stats_block(times, fluxes, "Differential Electrons", threshold=None)
-            fig_de = go.Figure()
-            fig_de.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Electron Flux"))
-            fig_de.update_layout(title="Differential Electrons (1-day)", height=220,
-                             margin=dict(l=10, r=10, t=30, b=10),
-                             xaxis=dict(title="Time", color="#9fc8ff"),
-                             yaxis=dict(title="Flux", color="#9fc8ff"))
-            st.plotly_chart(fig_de, use_container_width=True, key="differential_electrons")
-        else:
-            st.caption("No electron data available.")
+        if not data or not isinstance(data, list):
+            st.caption("No Kp index data available.")
+            return
+        times = [row.get("time_tag") for row in data]
+        kp_values = [row.get("kp_index", 0) for row in data]
+        times = times[-count:]
+        kp_values = kp_values[-count:]
+        colors = []
+        for kp in kp_values:
+            if kp < 5: colors.append("limegreen")
+            elif kp == 5: colors.append("gold")
+            elif kp == 6: colors.append("orange")
+            elif kp >= 7: colors.append("red")
+            else: colors.append("gray")
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=times, y=kp_values, marker_color=colors, name="Kp Index"))
+        fig.update_layout(title="Estimated Planetary K Index", height=320,
+                          xaxis_title="Time", yaxis_title="Kp index",
+                          showlegend=False)
+        fig.add_annotation(
+            xref="paper", yref="paper", x=0, y=1.12, text="Kp < 5: G0 (green) • Kp = 5: G1 (yellow) • Kp = 6: G2 (orange) • Kp ≥ 7: G3+ (red)",
+            showarrow=False, font=dict(color="white", size=13), bgcolor="rgba(0,0,0,0.2)"
+        )
+        st.plotly_chart(fig, use_container_width=True, config={
+            "displayModeBar": True,
+            "toImageButtonOptions": {"format":"png","filename":"Kp_Index","height":400,"width":1200,"scale":2}
+        })
 
-        st.markdown("### Differential Protons (1-day)")
-        url = "https://services.swpc.noaa.gov/json/goes/primary/differential-protons-1-day.json"
+    def plot_xray_flux():
+        url = "https://services.swpc.noaa.gov/json/goes/primary/xrays-3-day.json"
         data = fetch_json(url)
-        if data and isinstance(data, list):
-            times = [row.get("time_tag") for row in data if "time_tag" in row]
-            fluxes = [row.get("flux", 0) for row in data]
-            if time_ranges[selected_range]:
-                times = times[-time_ranges[selected_range]:]
-                fluxes = fluxes[-time_ranges[selected_range]:]
-            if smooth and len(fluxes) > 12:
-                fluxes = uniform_filter1d(fluxes, size=12)
-            stats_block(times, fluxes, "Differential Protons", threshold=None)
-            fig_dp = go.Figure()
-            fig_dp.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Proton Flux"))
-            fig_dp.update_layout(title="Differential Protons (1-day)", height=220,
-                             margin=dict(l=10, r=10, t=30, b=10),
-                             xaxis=dict(title="Time", color="#9fc8ff"),
-                             yaxis=dict(title="Flux", color="#9fc8ff"))
-            st.plotly_chart(fig_dp, use_container_width=True, key="differential_protons")
-        else:
-            st.caption("No proton data available.")
+        if not data or not isinstance(data, list):
+            st.caption("No X-ray data available.")
+            return
+        times = [row.get("time_tag") for row in data]
+        b_flux = [row.get("flux_b", row.get("flux", 0)) for row in data]
+        m_flux = [row.get("flux_m", 0) for row in data]
+        x_flux = [row.get("flux_x", 0) for row in data]
+        times = times[-count:]
+        b_flux = b_flux[-count:]
+        m_flux = m_flux[-count:]
+        x_flux = x_flux[-count:]
+        smooth = st.checkbox("Smooth (1-hour MA)", value=False, key="xray_smooth")
+        if smooth and len(b_flux) > 12:
+            b_flux = uniform_filter1d(b_flux, size=12)
+            m_flux = uniform_filter1d(m_flux, size=12)
+            x_flux = uniform_filter1d(x_flux, size=12)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=times, y=b_flux, mode="lines", name="B-class", line=dict(color="blue")))
+        fig.add_trace(go.Scatter(x=times, y=m_flux, mode="lines", name="M-class", line=dict(color="orange")))
+        fig.add_trace(go.Scatter(x=times, y=x_flux, mode="lines", name="X-class", line=dict(color="red")))
+        fig.update_layout(title="GOES X-ray Flux", height=300, xaxis_title="Time", yaxis_title="Flux (W/m²)")
+        st.plotly_chart(fig, use_container_width=True, config={
+            "displayModeBar": True,
+            "toImageButtonOptions": {"format":"png","filename":"GOES_Xray_Flux","height":400,"width":1200,"scale":2}
+        })
 
-        st.markdown("### Integral Electrons (1-day)")
-        url = "https://services.swpc.noaa.gov/json/goes/primary/integral-electrons-1-day.json"
+    def plot_proton_flux():
+        url = "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-3-day.json"
         data = fetch_json(url)
-        if data and isinstance(data, list):
-            times = [row.get("time_tag") for row in data if "time_tag" in row]
-            fluxes = [row.get("flux", 0) for row in data]
-            if time_ranges[selected_range]:
-                times = times[-time_ranges[selected_range]:]
-                fluxes = fluxes[-time_ranges[selected_range]:]
-            if smooth and len(fluxes) > 12:
-                fluxes = uniform_filter1d(fluxes, size=12)
-            stats_block(times, fluxes, "Integral Electrons", threshold=None)
-            fig_ie = go.Figure()
-            fig_ie.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Integral Electron Flux"))
-            fig_ie.update_layout(title="Integral Electrons (1-day)", height=220,
-                             margin=dict(l=10, r=10, t=30, b=10),
-                             xaxis=dict(title="Time", color="#9fc8ff"),
-                             yaxis=dict(title="Flux", color="#9fc8ff"))
-            st.plotly_chart(fig_ie, use_container_width=True, key="integral_electrons")
-        else:
-            st.caption("No integral electron data available.")
+        if not data or not isinstance(data, list):
+            st.caption("No Proton data available.")
+            return
+        times = [row.get("time_tag") for row in data]
+        flux_1mev = [row.get("flux_1mev", row.get("flux", 0)) for row in data]
+        flux_10mev = [row.get("flux_10mev", 0) for row in data]
+        times = times[-count:]
+        flux_1mev = flux_1mev[-count:]
+        flux_10mev = flux_10mev[-count:]
+        smooth = st.checkbox("Smooth (1-hour MA)", value=False, key="proton_smooth")
+        if smooth and len(flux_1mev) > 12:
+            flux_1mev = uniform_filter1d(flux_1mev, size=12)
+            flux_10mev = uniform_filter1d(flux_10mev, size=12)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=times, y=flux_1mev, mode="lines", name=">1 MeV", line=dict(color="orange")))
+        fig.add_trace(go.Scatter(x=times, y=flux_10mev, mode="lines", name=">10 MeV", line=dict(color="red")))
+        fig.update_layout(title="GOES Proton Flux", height=300, xaxis_title="Time", yaxis_title="Flux (pfu)")
+        st.plotly_chart(fig, use_container_width=True, config={
+            "displayModeBar": True,
+            "toImageButtonOptions": {"format":"png","filename":"GOES_Proton_Flux","height":400,"width":1200,"scale":2}
+        })
 
-        st.markdown("### Integral Protons Plot (1-day)")
-        url = "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-plot-1-day.json"
+    def plot_magnetometer():
+        url = "https://services.swpc.noaa.gov/json/goes/primary/magnetometers-3-day.json"
         data = fetch_json(url)
-        if data and isinstance(data, list):
-            times = [row.get("time_tag") for row in data if "time_tag" in row]
-            fluxes = [row.get("flux", 0) for row in data]
-            if time_ranges[selected_range]:
-                times = times[-time_ranges[selected_range]:]
-                fluxes = fluxes[-time_ranges[selected_range]:]
-            if smooth and len(fluxes) > 12:
-                fluxes = uniform_filter1d(fluxes, size=12)
-            stats_block(times, fluxes, "Integral Protons Plot", threshold=None)
-            fig_ipp = go.Figure()
-            fig_ipp.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="Integral Proton Flux"))
-            fig_ipp.update_layout(title="Integral Protons Plot (1-day)", height=220,
-                             margin=dict(l=10, r=10, t=30, b=10),
-                             xaxis=dict(title="Time", color="#9fc8ff"),
-                             yaxis=dict(title="Flux", color="#9fc8ff"))
-            st.plotly_chart(fig_ipp, use_container_width=True, key="integral_protons_plot")
-        else:
-            st.caption("No integral proton plot data available.")
+        if not data or not isinstance(data, list):
+            st.caption("No Magnetometer data available.")
+            return
+        times = [row.get("time_tag") for row in data]
+        bx = [row.get("bx_gsm", 0) for row in data]
+        by = [row.get("by_gsm", 0) for row in data]
+        bz = [row.get("bz_gsm", 0) for row in data]
+        times = times[-count:]
+        bx = bx[-count:]
+        by = by[-count:]
+        bz = bz[-count:]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=times, y=bx, mode="lines", name="Bx GSM", line=dict(color="cornflowerblue")))
+        fig.add_trace(go.Scatter(x=times, y=by, mode="lines", name="By GSM", line=dict(color="tomato")))
+        fig.add_trace(go.Scatter(x=times, y=bz, mode="lines", name="Bz GSM", line=dict(color="limegreen")))
+        fig.update_layout(title="GOES Magnetometers (GSM)", height=300, xaxis_title="Time", yaxis_title="nT")
+        st.plotly_chart(fig, use_container_width=True, config={
+            "displayModeBar": True,
+            "toImageButtonOptions": {"format":"png","filename":"GOES_Magnetometer","height":400,"width":1200,"scale":2}
+        })
 
-    # ------------- COLUMN 2 -------------
-    with col2:
-        st.markdown("### Magnetometers (1-day)")
-        url = "https://services.swpc.noaa.gov/json/goes/primary/magnetometers-1-day.json"
-        data = fetch_json(url)
-        if data and isinstance(data, list):
-            times = [row.get("time_tag") for row in data if "time_tag" in row]
-            bx = [row.get("bx_gsm", 0) for row in data]
-            by = [row.get("by_gsm", 0) for row in data]
-            bz = [row.get("bz_gsm", 0) for row in data]
-            if time_ranges[selected_range]:
-                times = times[-time_ranges[selected_range]:]
-                bx = bx[-time_ranges[selected_range]:]
-                by = by[-time_ranges[selected_range]:]
-                bz = bz[-time_ranges[selected_range]:]
-            stats_block(times, bx, "Magnetometer Bx", threshold=None)
-            stats_block(times, by, "Magnetometer By", threshold=None)
-            stats_block(times, bz, "Magnetometer Bz", threshold=None)
-            fig_mag = go.Figure()
-            fig_mag.add_trace(go.Scatter(x=times, y=bx, mode="lines", name="Bx GSM"))
-            fig_mag.add_trace(go.Scatter(x=times, y=by, mode="lines", name="By GSM"))
-            fig_mag.add_trace(go.Scatter(x=times, y=bz, mode="lines", name="Bz GSM"))
-            fig_mag.update_layout(title="Magnetometers (1-day)", height=220,
-                             margin=dict(l=10, r=10, t=30, b=10),
-                             xaxis=dict(title="Time", color="#9fc8ff"),
-                             yaxis=dict(title="nT", color="#9fc8ff"))
-            st.plotly_chart(fig_mag, use_container_width=True, key="magnetometers")
-        else:
-            st.caption("No magnetometer data available.")
-
-        st.markdown("### SUVI Flares (7-day)")
+    def plot_suvi_flares():
         url = "https://services.swpc.noaa.gov/json/goes/primary/suvi-flares-7-day.json"
         data = fetch_json(url)
-        if data and isinstance(data, list):
-            times = [row.get("begin_time") for row in data if "begin_time" in row]
-            intensities = [row.get("peak_intensity", 0) for row in data]
-            if time_ranges[selected_range]:
-                times = times[-time_ranges[selected_range]:]
-                intensities = intensities[-time_ranges[selected_range]:]
-            stats_block(times, intensities, "SUVI Flare Peak Intensity", threshold=None)
-            fig_suvi = go.Figure()
-            fig_suvi.add_trace(go.Bar(x=times, y=intensities, name="SUVI Flare Intensity"))
-            fig_suvi.update_layout(title="SUVI Flares (7-day)", height=220,
-                             margin=dict(l=10, r=10, t=30, b=10),
-                             xaxis=dict(title="Time", color="#9fc8ff"),
-                             yaxis=dict(title="Peak Intensity", color="#9fc8ff"))
-            st.plotly_chart(fig_suvi, use_container_width=True, key="suvi_flares")
-        else:
+        if not data or not isinstance(data, list):
             st.caption("No SUVI flares data available.")
+            return
+        times = [row.get("begin_time") for row in data if "begin_time" in row]
+        intensities = [row.get("peak_intensity", 0) for row in data]
+        times = times[-count:]
+        intensities = intensities[-count:]
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=times, y=intensities, name="SUVI Flare Intensity", marker_color="gold"))
+        fig.update_layout(title="GOES SUVI Flares", height=300, xaxis_title="Time", yaxis_title="Peak Intensity")
+        st.plotly_chart(fig, use_container_width=True, config={
+            "displayModeBar": True,
+            "toImageButtonOptions": {"format":"png","filename":"GOES_SUVI_Flares","height":400,"width":1200,"scale":2}
+        })
 
-        st.markdown("### X-ray Background (7-day)")
-        url = "https://services.swpc.noaa.gov/json/goes/primary/xray-background-7-day.json"
-        data = fetch_json(url)
-        if data and isinstance(data, list):
-            times = [row.get("time_tag") for row in data if "time_tag" in row]
-            fluxes = [row.get("flux", 0) for row in data]
-            if time_ranges[selected_range]:
-                times = times[-time_ranges[selected_range]:]
-                fluxes = fluxes[-time_ranges[selected_range]:]
-            if smooth and len(fluxes) > 12:
-                fluxes = uniform_filter1d(fluxes, size=12)
-            stats_block(times, fluxes, "X-ray Background", threshold=1e-7)
-            fig_xrb = go.Figure()
-            fig_xrb.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="X-ray Background Flux"))
-            fig_xrb.update_layout(title="X-ray Background (7-day)", height=220,
-                             margin=dict(l=10, r=10, t=30, b=10),
-                             xaxis=dict(title="Time", color="#9fc8ff"),
-                             yaxis=dict(title="Flux", color="#9fc8ff"))
-            st.plotly_chart(fig_xrb, use_container_width=True, key="xray_background")
-        else:
-            st.caption("No X-ray background chart data available.")
-
-        st.markdown("### X-rays (6-hour)")
-        url = "https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json"
-        data = fetch_json(url)
-        if data and isinstance(data, list):
-            times = [row.get("time_tag") for row in data if "time_tag" in row]
-            fluxes = [row.get("flux", 0) for row in data]
-            if time_ranges[selected_range]:
-                times = times[-time_ranges[selected_range]:]
-                fluxes = fluxes[-time_ranges[selected_range]:]
-            if smooth and len(fluxes) > 12:
-                fluxes = uniform_filter1d(fluxes, size=12)
-            stats_block(times, fluxes, "X-rays (6-hour)", threshold=1e-7)
-            fig_xr6 = go.Figure()
-            fig_xr6.add_trace(go.Scatter(x=times, y=fluxes, mode="lines", name="X-ray Flux"))
-            fig_xr6.update_layout(title="X-rays (6-hour)", height=220,
-                             margin=dict(l=10, r=10, t=30, b=10),
-                             xaxis=dict(title="Time", color="#9fc8ff"),
-                             yaxis=dict(title="Flux", color="#9fc8ff"))
-            st.plotly_chart(fig_xr6, use_container_width=True, key="xrays_6hour")
-        else:
-            st.caption("No X-rays data available.")
-
+    st.markdown("### Estimated Planetary K Index")
+    plot_kp_index()
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### GOES X-ray Flux")
+        plot_xray_flux()
+        st.markdown("### GOES Magnetometers")
+        plot_magnetometer()
+    with col2:
+        st.markdown("### GOES Proton Flux")
+        plot_proton_flux()
+        st.markdown("### GOES SUVI Flares")
+        plot_suvi_flares()
     st.caption(f"Last updated: {last_updated()}")
 
 
 # ========== Forecasts Tab ==========
 with tab_forecast:
+    # ---- Scoped styles to match your standard boxes/pills ----
+    st.markdown("""
+    <style>
+      .stdgrid3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
+      .stdgrid2 { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+      @media (max-width: 1000px) {
+        .stdgrid3 { grid-template-columns:1fr; }
+        .stdgrid2 { grid-template-columns:1fr; }
+      }
+
+      /* Standard box style from your screenshot */
+      .stdbox {
+        border:1px solid rgba(255,255,255,.18);
+        border-radius:12px;
+        padding:12px 14px;
+        background:rgba(255,255,255,.03);
+      }
+      .stdhdr {
+        font-weight:700; font-size:.95rem; color:#93c5fd; /* blue header */
+        margin-bottom:.35rem;
+      }
+      .stdsub { opacity:.8; font-size:.9rem; margin-top:-.15rem; }
+      .subtle { opacity:.75; font-size:.9rem; }
+
+      /* Chips row + chips */
+      .chips-row { display:flex; gap:.5rem; flex-wrap:wrap; margin-top:.25rem; }
+      .chip {
+        display:inline-block;
+        padding:.12rem .55rem;
+        border-radius:999px;
+        font-weight:700;
+        font-size:.85rem;
+        line-height:1.2;
+        border:2px solid;     /* outlined look like your screenshot */
+        background:transparent;
+      }
+
+      /* Tones (visual mapping) */
+      .chip.ok      { border-color:#22c55e33; color:#a7f3d0; }  /* green-ish */
+      .chip.caution { border-color:#f59e0b33; color:#fde68a; }  /* amber */
+      .chip.watch   { border-color:#ef444433; color:#fecaca; }  /* red */
+
+      /* Little dot for Kp (kept if you want to show it later) */
+      .kp-dot {
+        display:inline-block; width:.6rem; height:.6rem; border-radius:50%;
+        margin-right:.35rem; vertical-align:middle; background:rgba(255,255,255,.35);
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
     st.markdown("## Three-Day Forecast")
 
-    # Pull structured text + 3-day numbers + current R/S/G
+    # --- Data pulls ---
     structured_disc, noaa_discussion_src, _raw = get_noaa_forecast_text()
     narrative_flags = detect_r_s_watch_flags(structured_disc)
     src_note = noaa_discussion_src.split('/')[-1] if noaa_discussion_src else 'unavailable'
@@ -1071,7 +1091,7 @@ with tab_forecast:
     day1, day2, day3 = three["days"]
     past, current = get_noaa_rsg_now_and_past()
 
-    # ---------- Fallback helpers for NOAA "Forecast" text ----------
+    # ---------- NOAA forecast text helpers ----------
     def _clean_noaa_text(txt: str) -> str:
         if not txt:
             return ""
@@ -1081,19 +1101,15 @@ with tab_forecast:
 
     def _fallback_forecast_from_reflow(structured: dict, sec_label_regex: str) -> str:
         """
-        If the 'forecast' field is empty, try to carve a forecast paragraph out of
-        the raw '_reflowed' blob by grabbing text after a 'Forecast' marker (if present)
-        for the given section.
+        If the 'forecast' field is empty, carve a forecast paragraph out of
+        the raw '_reflowed' blob after a 'Forecast' marker.
         """
         blob = (structured.get("_reflowed") or "").replace("\r", "")
         if not blob:
             return ""
-
-        # Try to find the section header (e.g., 'Solar Wind', 'Geospace') then the Forecast block.
-        # Stop at the next section header or end.
         start_pat = rf"(?:^|\n).*?(?:{sec_label_regex}).*?(?:Forecast|Forcast)\b.*?"
         end_pats = [
-            r"(?:^|\n)\s*(?:Summary|24\s*hr|24hr)\b",    # if NOAA flips order
+            r"(?:^|\n)\s*(?:Summary|24\s*hr|24hr)\b",
             r"(?:^|\n)\s*Solar\s*Activity\b",
             r"(?:^|\n)\s*Energetic\s*Particle\b",
             r"(?:^|\n)\s*Solar\s*Wind\b",
@@ -1102,7 +1118,6 @@ with tab_forecast:
         m = re.search(start_pat, blob, re.I | re.S)
         if not m:
             return ""
-
         start = m.end()
         end = len(blob)
         for pat in end_pats:
@@ -1110,9 +1125,7 @@ with tab_forecast:
             if m2:
                 end = start + m2.start()
                 break
-
         carved = blob[start:end].strip()
-        # Keep a couple of sentences
         if carved:
             sent = re.findall(r"(.+?\.)", carved.replace("\n", " "))
             carved = " ".join(sent[:5]).strip() if sent else carved
@@ -1124,38 +1137,142 @@ with tab_forecast:
             return fc
         return _fallback_forecast_from_reflow(structured, sec_label_regex) or "—"
 
-    # ---------- Top: Day 1 • Day 2 • Day 3 quick matrix ----------
-    def _kp_str(v): return "~" if v is None else f"{v:.1f}"
-
-    def day_card(col, title, d):
-        with col:
-            st.markdown(f"### {title}")
-            r_lbl, r_cls = r_label_and_class_for_day(d, narrative_flags)
-            s_lbl, s_cls = s_label_and_class_for_day(d, narrative_flags)
-            g_lbl, g_cls = g_label_and_class_for_day(d)
-            st.markdown(
-                f"- **Geomagnetic (G):** <span class='{g_cls}' style='padding:.1rem .35rem;border-radius:.35rem'>{g_lbl}</span>  ·  **Kp≈** {_kp_str(d['kp'])}\n"
-                f"- **Radiation (S):** <span class='{s_cls}' style='padding:.1rem .35rem;border-radius:.35rem'>{s_lbl}</span>  ·  **S1+:** {d['s1']}%\n"
-                f"- **Radio (R):** <span class='{r_cls}' style='padding:.1rem .35rem;border-radius:.35rem'>{r_lbl}</span>  ·  **R1–R2:** {d['r12']}%  ·  **R3+:** {d['r3']}%",
-                unsafe_allow_html=True
-            )
-
-    c1, c2, c3 = st.columns(3)
-    day_card(c1, "Day 1", day1)
-    day_card(c2, "Day 2", day2)
-    day_card(c3, "Day 3", day3)
-
-    # Spacer for readability
-    st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
-
-    # ---------- Narrative (3-Day) with robust fallbacks ----------
-    st.markdown("### Narrative (3-Day)")
-
-    # Pull forecast text for each section, with resilient fallbacks
+    # ---------- Forecast text pulls ----------
     fc_sa = _forecast_for(structured_disc, "solar_activity", r"Solar\s*Activity")
     fc_ep = _forecast_for(structured_disc, "energetic_particle", r"Eng?ergetic\s*Particle")
     fc_sw = _forecast_for(structured_disc, "solar_wind", r"Solar\s*Wind")
     fc_gs = _forecast_for(structured_disc, "geospace", r"(?:Geo[\s-]*Space|Geospace)")
+
+    # ---------- NZ narrative at the top (standard boxes) ----------
+    st.markdown("### New Zealand Plain-English Summaries")
+
+    nz_fc_sa = rewrite_to_nz("solar_activity", fc_sa, r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1)
+    nz_fc_sw = rewrite_to_nz("solar_wind",     fc_sw, r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1)
+    nz_fc_gs = rewrite_to_nz("geospace",       fc_gs, r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1)
+
+    st.markdown(
+        f"""
+        <div class="stdgrid3">
+          <div class="stdbox">
+            <div class="stdhdr">Solar Activity (NZ)</div>
+            <div class="stdsub">Sunspots & flare risk for operations</div>
+            <div style="margin-top:.45rem;">{nz_fc_sa}</div>
+          </div>
+          <div class="stdbox">
+            <div class="stdhdr">Solar Wind (NZ)</div>
+            <div class="stdsub">IMF, speed & CME impacts for comms</div>
+            <div style="margin-top:.45rem;">{nz_fc_sw}</div>
+          </div>
+          <div class="stdbox">
+            <div class="stdhdr">Geospace (NZ)</div>
+            <div class="stdsub">Kp/aurora & GNSS stability across NZ</div>
+            <div style="margin-top:.45rem;">{nz_fc_gs}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
+
+    # ---------- Severity pill tone mapping ----------
+    def _tone_from_label(label_text: str) -> str:
+        """
+        Returns: 'ok' | 'caution' | 'watch'
+        Rule: level 3 => caution; level 4+ => watch; else ok
+        """
+        if not label_text:
+            return "ok"
+        m = re.search(r"(\d+)", label_text)
+        n = int(m.group(1)) if m else 0
+        if n >= 4:
+            return "watch"
+        if n == 3:
+            return "caution"
+        return "ok"
+
+    # ---------- Quick matrix: Day 1–3 (standard boxes + pills) ----------
+    def _kp_str(v): return "~" if v is None else f"{v:.1f}"
+
+    def _badge_row(d):
+        r_lbl, _ = r_label_and_class_for_day(d, narrative_flags)
+        s_lbl, _ = s_label_and_class_for_day(d, narrative_flags)
+        g_lbl, _ = g_label_and_class_for_day(d)
+        r_tone = _tone_from_label(r_lbl)
+        s_tone = _tone_from_label(s_lbl)
+        g_tone = _tone_from_label(g_lbl)
+        return (
+            f"<div class='chips-row'>"
+            f"<span class='chip {g_tone}'>G: {g_lbl} · Kp≈{_kp_str(d['kp'])}</span>"
+            f"<span class='chip {s_tone}'>S: {s_lbl} · S1+: {d['s1']}%</span>"
+            f"<span class='chip {r_tone}'>R: {r_lbl} · R1–R2: {d['r12']}% · R3+: {d['r3']}%</span>"
+            f"</div>"
+        )
+
+    st.markdown("<div style='height:.75rem;'></div>", unsafe_allow_html=True)
+    st.markdown("### Next 72 Hours — At a Glance")
+    st.markdown(
+        f"""
+        <div class="stdgrid3">
+          <div class="stdbox">
+            <div class="stdhdr">Day 1 forecast</div>
+            {_badge_row(day1)}
+          </div>
+          <div class="stdbox">
+            <div class="stdhdr">Day 2 forecast</div>
+            {_badge_row(day2)}
+          </div>
+          <div class="stdbox">
+            <div class="stdhdr">Day 3 forecast</div>
+            {_badge_row(day3)}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # ---------- Status: Past 24 hours & Current (slot above NOAA narrative) ----------
+    st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
+    st.markdown("### Status — Past 24 hours & Now")
+
+    def _now_chips(d: dict) -> str:
+        r_lbl = d.get("r", "")
+        s_lbl = d.get("s", "")
+        g_lbl = d.get("g", "")
+        kp    = d.get("kp", None)
+        r_tone = _tone_from_label(r_lbl)
+        s_tone = _tone_from_label(s_lbl)
+        g_tone = _tone_from_label(g_lbl)
+        kp_str = f" · Kp≈{kp:.1f}" if isinstance(kp, (int, float)) else ""
+        return (
+            "<div class='chips-row'>"
+            f"<span class='chip {g_tone}'>G: {g_lbl}{kp_str}</span>"
+            f"<span class='chip {s_tone}'>S: {s_lbl}</span>"
+            f"<span class='chip {r_tone}'>R: {r_lbl}</span>"
+            "</div>"
+        )
+
+    st.markdown(
+        f"""
+        <div class="stdgrid2">
+          <div class="stdbox">
+            <div class="stdhdr">Past 24 hours</div>
+            {_now_chips(past)}
+            <div class="subtle" style="margin-top:.4rem;">Radio blackouts · Radiation storms · Geomagnetic storms</div>
+          </div>
+          <div class="stdbox">
+            <div class="stdhdr">Current</div>
+            {_now_chips(current)}
+            <div class="subtle" style="margin-top:.4rem;">Radio blackouts · Radiation storms · Geomagnetic storms</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
+
+    # ---------- NOAA detailed narrative (boxed) ----------
+    st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
+    st.markdown("### NOAA Detailed Narrative")
 
     for title, fc_txt in [
         ("Solar Activity", fc_sa),
@@ -1164,37 +1281,17 @@ with tab_forecast:
         ("Geospace", fc_gs),
     ]:
         if fc_txt and fc_txt != "—":
-            st.markdown(f"#### {title}")
-            st.markdown(fc_txt.replace("\n", "<br>"), unsafe_allow_html=True)
+            with st.expander(title, expanded=False):
+                st.markdown(
+                    f"<div class='stdbox'><div class='stdhdr'>{title}</div>{fc_txt.replace('\n','<br>')}</div>",
+                    unsafe_allow_html=True
+                )
 
     st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
 
-    # ---------- NZ Plain-English (3-Day Context) ----------
-    st.divider()
-    st.markdown("### NZ Plain-English (3-Day Context)")
 
-    nz_fc_sa = rewrite_to_nz("solar_activity", fc_sa,
-                             r_now=current['r'], s_now=current['s'], g_now=current['g'],
-                             day1=day1)
-    nz_fc_sw = rewrite_to_nz("solar_wind", fc_sw,
-                             r_now=current['r'], s_now=current['s'], g_now=current['g'],
-                             day1=day1)
-    nz_fc_gs = rewrite_to_nz("geospace", fc_gs,
-                             r_now=current['r'], s_now=current['s'], g_now=current['g'],
-                             day1=day1)
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown("#### Solar Activity (NZ)")
-        st.info(nz_fc_sa)
-    with c2:
-        st.markdown("#### Solar Wind (NZ)")
-        st.info(nz_fc_sw)
-    with c3:
-        st.markdown("#### Geospace (NZ)")
-        st.info(nz_fc_gs)
-        
-        st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
+
 
 
 
