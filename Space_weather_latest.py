@@ -1285,6 +1285,9 @@ with tab_forecast:
 
 
 # ========== Aurora Tab (self-contained; hard-coded BOM key) ==========
+# ... [everything above remains unchanged] ...
+
+# ========== Aurora Tab (self-contained; hard-coded BOM key) ==========
 with tab_aurora:
     st.markdown("## Aurora (BOM Australia Region)")
 
@@ -1369,8 +1372,6 @@ with tab_aurora:
 
     # ---------- Time series fetchers (BOM) ----------
     @st.cache_data(ttl=600)
-    # --- Normalise BOM payloads that may be dicts OR lists ---
- # normalise dict/list payloads
     def _bom_data(payload):
         if isinstance(payload, dict):
             d = payload.get("data")
@@ -1397,13 +1398,11 @@ with tab_aurora:
 
     @st.cache_data(ttl=600)
     def _bom_get_a_series(start: str, end: str):
-        # A-index is DAILY and keyed to 00:00 UTC — range must span midnights
         payload = _bom_post("get-a-index", {"location": "Australian region", "start": start, "end": end}) or []
         data = _bom_data(payload)
         out = [{"date": str(d.get("valid_time") or d.get("date"))[:10], "a": int(d.get("index"))}
                for d in data if isinstance(d, dict) and d.get("index") is not None]
         if not out:
-            # fallback to latest daily A
             latest = _bom_post("get-a-index", {"location": "Australian region"}) or []
             data2 = _bom_data(latest)
             out = [{"date": str(d.get("valid_time") or d.get("date"))[:10], "a": int(d.get("index"))}
@@ -1417,25 +1416,22 @@ with tab_aurora:
         out = [{"time": str(d.get("valid_time") or d.get("time")), "dst": int(d.get("index"))}
                for d in data if isinstance(d, dict) and d.get("index") is not None and (d.get("valid_time") or d.get("time"))]
         if not out:
-            # fallback to latest Dst point
             latest = _bom_post("get-dst-index", {"location": "Australian region"}) or []
             data2 = _bom_data(latest)
             out = [{"time": str(d.get("valid_time") or d.get("time")), "dst": int(d.get("index"))}
                    for d in data2 if isinstance(d, dict) and d.get("index") is not None and (d.get("valid_time") or d.get("time"))]
         return out
 
-
-
-    # ---------- Fetch data (these names must match the function signatures above) ----------
+    # ---------- Fetch data ----------
     k_series   = _bom_get_k_series(k_location, start_utc, end_utc)
     a_series   = _bom_get_a_series(start_utc, end_utc)
     dst_series = _bom_get_dst_series(start_utc, end_utc)
+
 
     # ---------- Charts ----------
     st.markdown("### BOM Indices")
     c1, c2 = st.columns(2)
 
-    # K-index (bar)
     with c1:
         if k_series:
             times = [d["time"] for d in k_series]
@@ -1456,7 +1452,6 @@ with tab_aurora:
         else:
             st.info("No K-index data available for the selected range.")
 
-    # A-index (line)
     with c2:
         if a_series:
             dates = [d["date"] for d in a_series]
@@ -1470,7 +1465,6 @@ with tab_aurora:
         else:
             st.info("No A-index data available for the selected range.")
 
-    # Dst (line)
     st.markdown("### Storm-time Index (Dst)")
     if dst_series:
         times = [d["time"] for d in dst_series]
@@ -1485,226 +1479,22 @@ with tab_aurora:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No Dst data available for the selected range.")
-
-    # ---------- Simple “Ovation-style” oval (approximate) ----------
-    # --- NOAA OVATION (official) ---
-    # --- NOAA OVATION (official) ---
-    st.markdown("### NOAA OVATION — 30-Minute Forecast (official)")
-
-    @st.cache_data(ttl=300)  # cache 5 minutes
-    def _ovation_image_url(hemisphere: str = "south") -> str:
-        return ("https://services.swpc.noaa.gov/images/aurora-forecast-northern-hemisphere.jpg"
-                if hemisphere == "north"
-                else "https://services.swpc.noaa.gov/images/aurora-forecast-southern-hemisphere.jpg")
-
-    @st.cache_data(ttl=300, show_spinner=False)
-    def _fetch_image_bytes(url: str):
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        return r.content
-
-    _ov_hemi = "north" if hemi == "Northern" else "south"
-    _url = _ovation_image_url(_ov_hemi)
-
-    try:
-        img_bytes = _fetch_image_bytes(_url)
-        OVATION_WIDTH = 720  # tweak as you like
-        left, mid, right = st.columns([1, 3, 1])
-        with mid:
-            st.image(
-            img_bytes,
-            caption=f"NOAA SWPC OVATION — {_ov_hemi.title()}ern Hemisphere (latest)",
-            width=OVATION_WIDTH,    # << fixed width
-    )
-        st.caption("Source: NOAA/NWS SWPC — Aurora 30-Minute Forecast")
-    except Exception as e:
-        st.warning(f"Could not load OVATION image: {e}")
-
-
-    st.caption(f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} · Source: BOM SWS API")
-    
-    # ---------- NZ OVATION heatmap (interactive) ----------
-# Uses: fetch_json (already defined), numpy, plotly (already imported)
-# Crops to: 140°E .. 170°W (i.e., 140..190 in 0–359), and 60°S .. 20°S (-60..-20)
-
-st.markdown("### OVATION — NZ Window (interactive)")
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _ovation_grid():
-    # SWPC OVATION JSON: coordinates -> [[lon, lat, prob], ...]
-    url = "https://services.swpc.noaa.gov/json/ovation_aurora_latest.json"
-    data = fetch_json(url)
-    if not data or "coordinates" not in data:
-        return None, None, None, None
-    coords = data["coordinates"]
-    arr = np.array(coords, dtype=float)  # [N, 3] = [lon, lat, prob%]
-    # reshape into 2D: 181 rows (lat -90..90), 360 cols (lon 0..359)
-    grid = np.reshape(arr[:, 2], (181, 360), order="F")
-    lats = np.linspace(-90, 90, 181)
-    lons = np.arange(0, 360)
-    ts = data.get("Forecast Time", "")
-    return grid, lats, lons, ts
-
-grid, lats, lons, ts = _ovation_grid()
-
-if grid is None:
-    st.warning("OVATION JSON unavailable right now.")
-else:
-    # Crop to NZ window
-    lon_min, lon_max = 140, 190      # 140°E .. 170°W (wrapped as 190)
-    lat_min, lat_max = -60, -20      # 60°S .. 20°S
-
-    lat_mask = (lats >= lat_min) & (lats <= lat_max)
-    lon_mask = (lons >= lon_min) & (lons <= lon_max)
-
-    sub = grid[lat_mask][:, lon_mask]
-    sub_lats = lats[lat_mask]
-    sub_lons = lons[lon_mask]
-
-    # Optional UI: show only stronger probabilities
-    clip_min = st.slider("Show probabilities ≥ (%)", 0, 50, 5, 1)
-    sub_plot = np.where(sub >= clip_min, sub, np.nan)
-
-    # Plotly heatmap (pan/zoom enabled)
-    fig = go.Figure(
-        data=go.Heatmap(
-            z=sub_plot,
-            x=sub_lons,
-            y=sub_lats,
-            colorbar=dict(title="Aurora %"),
-            hovertemplate="Lon %{x}°, Lat %{y}°<br>%{z:.0f}%<extra></extra>",
-            zmin=0, zmax=100,
-            colorscale="Turbo"    # vivid green→yellow→red; tweak if you prefer
-        )
-    )
-    fig.update_layout(
-        height=480,
-        margin=dict(l=10, r=10, t=40, b=10),
-        title=f"NZ / South Pacific window — valid {ts or 'latest'} UTC",
-        xaxis_title="Longitude (°E, 0–359)",
-        yaxis_title="Latitude (°)",
-        xaxis=dict(constrain="domain"),
-        yaxis=dict(scaleanchor=None)  # free aspect so zooming feels natural
-    )
-    # By default, Heatmap places lower y at bottom; our lats ascend (-60→-20), which is what we want.
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.caption("Data: NOAA/NWS SWPC OVATION 30-minute forecast (updated ~5 min). Region: 140°E–170°W, 60°S–20°S.")
-    
-    # ---------- NZ basemap overlay + PNG export ----------
-st.markdown("### OVATION — NZ Basemap (coastlines)")
-
-# UI: point thinning + recenter + export toggle
-thin = st.slider("Point thinning (°)", 1, 6, 2, 1, help="Plot every Nth lon/lat cell to keep it snappy.")
-recenter = st.toggle("Recenter to NZ", value=True)
-enable_export = st.toggle("Enable PNG export", value=False, help="Generates a transparent PNG (needs kaleido)")
-
-if grid is None:
-    st.info("OVATION JSON unavailable for basemap right now.")
-else:
-    # Reuse the same cropped window you used for the heatmap
-    lon_min, lon_max = 140, 190      # 140°E .. 170°W (wrapped to 190)
-    lat_min, lat_max = -60, -20
-
-    lat_mask = (lats >= lat_min) & (lats <= lat_max)
-    lon_mask = (lons >= lon_min) & (lons <= lon_max)
-    sub = grid[lat_mask][:, lon_mask]
-    sub_lats = lats[lat_mask]
-    sub_lons = lons[lon_mask]
-
-    # Use same clip as heatmap if you defined it; otherwise provide one
-    clip_min2 = clip_min if "clip_min" in locals() else 5
-    z = np.where(sub >= clip_min2, sub, np.nan)
-
-    # Build lon/lat mesh and thin
-    LON, LAT = np.meshgrid(sub_lons, sub_lats)
-    # Convert 0..359 longitudes to -180..180 for geo plotting
-    LON180 = np.where(LON > 180, LON - 360, LON)
-
-    # Flatten + mask finite points
-    mask = np.isfinite(z)
-    lon_pts = LON180[mask][::thin]
-    lat_pts = LAT[mask][::thin]
-    val_pts = z[mask][::thin]
-
-    # Scattergeo with colorbar = true heat overlay on a coastlined basemap
-    fig_geo = go.Figure()
-    fig_geo.add_trace(go.Scattergeo(
-        lon=lon_pts,
-        lat=lat_pts,
-        mode="markers",
-        marker=dict(
-            size=4,
-            color=val_pts,
-            cmin=0, cmax=100,
-            colorscale="Turbo",
-            colorbar=dict(title="Aurora %")
-        ),
-        hovertemplate="Lon %{lon:.1f}°, Lat %{lat:.1f}°<br>%{marker.color:.0f}%<extra></extra>",
-        name="OVATION"
-    ))
-
-    # Layout with coastlines; optional recenter around NZ (≈174°E, 41°S)
-    fig_geo.update_layout(
-        title=f"NZ / South Pacific basemap — valid {ts or 'latest'} UTC",
-        height=520,
-        margin=dict(l=10, r=10, t=40, b=10),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        geo=dict(
-            projection=dict(type="natural earth", rotation=dict(lon=174 if recenter else 0)),
-            lataxis=dict(range=[lat_min, lat_max]),
-            # Leaving lonaxis range unset avoids dateline-wrapping glitches; rotation recenters view.
-            showcoastlines=True, coastlinecolor="#9ec5ff",
-            showland=True, landcolor="rgb(30,40,50)",
-            showocean=True, oceancolor="rgb(10,20,30)",
-            showcountries=True, countrycolor="rgba(255,255,255,0.35)",
-            bgcolor="rgba(0,0,0,0)"
-        )
-    )
-
-    st.plotly_chart(fig_geo, use_container_width=True)
-
-    # Optional: export transparent PNG for PDF use
-    if enable_export:
-        try:
-            import plotly.io as pio
-            png_bytes = pio.to_image(
-                fig_geo, format="png", width=1200, height=700, scale=2, engine="kaleido"
-            )
-            st.download_button(
-                "⬇️ Download NZ OVATION basemap (PNG)",
-                data=png_bytes,
-                file_name="ovation_nz_basemap.png",
-                mime="image/png",
-            )
-            st.caption("PNG has a transparent background for clean placement in your PDF.")
-        except Exception as e:
-            st.warning(f"PNG export requires Kaleido. Install with: pip install -U kaleido  (error: {e})")
-
-
-    
+        
     # ---------- New Zealand twist (local time + city chips) ----------
-
-    from zoneinfo import ZoneInfo  # top-level import recommended
+    from zoneinfo import ZoneInfo
 
     def _approx_kp_from_k(k_val: int | float) -> float:
-        # Simple 1:1 mapping is OK for quick ops use here
         try:
             return max(0.0, min(9.0, float(k_val)))
         except Exception:
             return 0.0
 
-    # Pull latest K from the BOM K series you already fetched
     _latest_k = (k_series[-1]["k"] if k_series else None)
     _est_kp   = _approx_kp_from_k(_latest_k) if _latest_k is not None else None
 
-    # NZ local time + quick night flag (coarse but useful)
     _now_nz = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Pacific/Auckland"))
     _is_night_nz = _now_nz.hour >= 18 or _now_nz.hour < 6
 
-    # City thresholds (rough, ops-friendly heuristics)
-    # Tweak these if you like; they’re commonly used field guide levels.
     _city_min_kp = [
         ("Southland (Invercargill)", 5.0),
         ("Otago (Dunedin)",           6.0),
@@ -1714,14 +1504,12 @@ else:
     ]
 
     def _chip(label: str, tone: str) -> str:
-        # tones: ok|caution|watch (reuse your existing CSS if present)
         color = {"ok":"#22c55e", "caution":"#f59e0b", "watch":"#ef4444"}[tone]
         bg    = {"ok":"rgba(34,197,94,.12)", "caution":"rgba(245,158,11,.12)", "watch":"rgba(239,68,68,.12)"}[tone]
         return f"<span style='display:inline-block;padding:.12rem .55rem;border-radius:999px;border:2px solid {color};background:{bg};font-weight:700;font-size:.85rem;color:{color};'>{label}</span>"
 
     st.markdown("### New Zealand — Quick Look")
 
-    # Header row: local time + night/day + K/Kp readout
     _kp_txt = f"~Kp≈{_est_kp:.1f}" if _est_kp is not None else "Kp n/a"
     _k_txt  = f"K={_latest_k}" if _latest_k is not None else "K n/a"
     _night  = "Night" if _is_night_nz else "Day"
@@ -1729,14 +1517,13 @@ else:
     st.markdown(
         f"<div style='display:flex;gap:.6rem;flex-wrap:wrap;'>"
         f"{_chip('NZT: ' + _now_nz.strftime('%Y-%m-%d %H:%M'), 'ok')}"
-        f"{_chip(_night, 'caution' if not _is_night_nz else 'ok')}"  # <-- use _night
+        f"{_chip(_night, 'caution' if not _is_night_nz else 'ok')}"
         f"{_chip(_k_txt, 'ok')}"
         f"{_chip(_kp_txt, 'ok')}"
         f"</div>",
         unsafe_allow_html=True
     )
 
-    # City chips: show "Now" if likely visible given current Kp AND it’s night in NZ
     chips = []
     for name, kp_min in _city_min_kp:
         if _est_kp is None:
@@ -1756,7 +1543,249 @@ else:
         unsafe_allow_html=True
     )
 
-st.caption("Heuristic guide only: thresholds are approximate and assume clear skies + dark conditions.")
+    st.caption("Heuristic guide only: thresholds are approximate and assume clear skies + dark conditions.")    
+
+    # ---------- NOAA OVATION (official) ----------
+    st.markdown("### NOAA OVATION — 30-Minute Forecast (official)")
+
+    @st.cache_data(ttl=300)
+    def _ovation_image_url(hemisphere: str = "south") -> str:
+        return ("https://services.swpc.noaa.gov/images/aurora-forecast-northern-hemisphere.jpg"
+                if hemisphere == "north"
+                else "https://services.swpc.noaa.gov/images/aurora-forecast-southern-hemisphere.jpg")
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _fetch_image_bytes(url: str):
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        return r.content
+
+    _ov_hemi = "north" if hemi == "Northern" else "south"
+    _url = _ovation_image_url(_ov_hemi)
+
+    try:
+        img_bytes = _fetch_image_bytes(_url)
+        OVATION_WIDTH = 720
+        left, mid, right = st.columns([1, 3, 1])
+        with mid:
+            st.image(
+            img_bytes,
+            caption=f"NOAA SWPC OVATION — {_ov_hemi.title()}ern Hemisphere (latest)",
+            width=OVATION_WIDTH,
+        )
+        st.caption("Source: NOAA/NWS SWPC — Aurora 30-Minute Forecast")
+    except Exception as e:
+        st.warning(f"Could not load OVATION image: {e}")
+
+    st.caption(f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')} · Source: BOM SWS API")
+
+    # ---------- NZ OVATION heatmap (interactive) ----------
+    st.markdown("### OVATION — NZ Window (interactive)")
+
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _ovation_grid():
+        url = "https://services.swpc.noaa.gov/json/ovation_aurora_latest.json"
+        data = fetch_json(url)
+        if not data or "coordinates" not in data:
+            return None, None, None, None
+        coords = data["coordinates"]
+        arr = np.array(coords, dtype=float)
+        grid = np.reshape(arr[:, 2], (181, 360), order="F")
+        lats = np.linspace(-90, 90, 181)
+        lons = np.arange(0, 360)
+        ts = data.get("Forecast Time", "")
+        return grid, lats, lons, ts
+
+    grid, lats, lons, ts = _ovation_grid()
+
+    if grid is None:
+        st.warning("OVATION JSON unavailable right now.")
+    else:
+        lon_min, lon_max = 140, 190
+        lat_min, lat_max = -60, -20
+
+        lat_mask = (lats >= lat_min) & (lats <= lat_max)
+        lon_mask = (lons >= lon_min) & (lons <= lon_max)
+
+        sub = grid[lat_mask][:, lon_mask]
+        sub_lats = lats[lat_mask]
+        sub_lons = lons[lon_mask]
+
+        clip_min = st.slider("Show probabilities ≥ (%)", 0, 50, 5, 1)
+        sub_plot = np.where(sub >= clip_min, sub, np.nan)
+
+        fig = go.Figure(
+            data=go.Heatmap(
+                z=sub_plot,
+                x=sub_lons,
+                y=sub_lats,
+                colorbar=dict(title="Aurora %"),
+                hovertemplate="Lon %{x}°, Lat %{y}°<br>%{z:.0f}%<extra></extra>",
+                zmin=0, zmax=100,
+                colorscale="Turbo"
+            )
+        )
+        fig.update_layout(
+            height=480,
+            margin=dict(l=10, r=10, t=40, b=10),
+            title=f"NZ / South Pacific window — valid {ts or 'latest'} UTC",
+            xaxis_title="Longitude (°E, 0–359)",
+            yaxis_title="Latitude (°)",
+            xaxis=dict(constrain="domain"),
+            yaxis=dict(scaleanchor=None)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Data: NOAA/NWS SWPC OVATION 30-minute forecast (updated ~5 min). Region: 140°E–170°W, 60°S–20°S.")
+        
+    # ---------- New Zealand twist (local time + city chips) ----------
+    from zoneinfo import ZoneInfo
+
+    def _approx_kp_from_k(k_val: int | float) -> float:
+        try:
+            return max(0.0, min(9.0, float(k_val)))
+        except Exception:
+            return 0.0
+
+    _latest_k = (k_series[-1]["k"] if k_series else None)
+    _est_kp   = _approx_kp_from_k(_latest_k) if _latest_k is not None else None
+
+    _now_nz = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Pacific/Auckland"))
+    _is_night_nz = _now_nz.hour >= 18 or _now_nz.hour < 6
+
+    _city_min_kp = [
+        ("Southland (Invercargill)", 5.0),
+        ("Otago (Dunedin)",           6.0),
+        ("Canterbury (Christchurch)", 6.0),
+        ("Wellington",                7.0),
+        ("Auckland",                  8.0),
+    ]
+
+    def _chip(label: str, tone: str) -> str:
+        color = {"ok":"#22c55e", "caution":"#f59e0b", "watch":"#ef4444"}[tone]
+        bg    = {"ok":"rgba(34,197,94,.12)", "caution":"rgba(245,158,11,.12)", "watch":"rgba(239,68,68,.12)"}[tone]
+        return f"<span style='display:inline-block;padding:.12rem .55rem;border-radius:999px;border:2px solid {color};background:{bg};font-weight:700;font-size:.85rem;color:{color};'>{label}</span>"
+
+    st.markdown("### New Zealand — Quick Look")
+
+    _kp_txt = f"~Kp≈{_est_kp:.1f}" if _est_kp is not None else "Kp n/a"
+    _k_txt  = f"K={_latest_k}" if _latest_k is not None else "K n/a"
+    _night  = "Night" if _is_night_nz else "Day"
+
+    st.markdown(
+        f"<div style='display:flex;gap:.6rem;flex-wrap:wrap;'>"
+        f"{_chip('NZT: ' + _now_nz.strftime('%Y-%m-%d %H:%M'), 'ok')}"
+        f"{_chip(_night, 'caution' if not _is_night_nz else 'ok')}"
+        f"{_chip(_k_txt, 'ok')}"
+        f"{_chip(_kp_txt, 'ok')}"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    chips = []
+    for name, kp_min in _city_min_kp:
+        if _est_kp is None:
+            chips.append(_chip(f"{name}: needs Kp≥{kp_min:.0f}", "caution"))
+        else:
+            if _est_kp >= kp_min and _is_night_nz:
+                chips.append(_chip(f"{name}: Now (Kp≥{kp_min:.0f})", "ok"))
+            elif _est_kp >= kp_min and not _is_night_nz:
+                chips.append(_chip(f"{name}: Nighttime (Kp≥{kp_min:.0f})", "caution"))
+            else:
+                chips.append(_chip(f"{name}: Kp≥{kp_min:.0f}", "watch"))
+
+    st.markdown(
+        "<div style='margin-top:.5rem;display:flex;gap:.45rem;flex-wrap:wrap;'>"
+        + "".join(chips) +
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+    st.caption("Heuristic guide only: thresholds are approximate and assume clear skies + dark conditions.")    
+
+    # ---------- NZ basemap overlay + PNG export ----------
+    st.markdown("### OVATION — NZ Basemap (coastlines)")
+
+    thin = st.slider("Point thinning (°)", 1, 6, 2, 1, help="Plot every Nth lon/lat cell to keep it snappy.")
+    recenter = st.toggle("Recenter to NZ", value=True)
+    enable_export = st.toggle("Enable PNG export", value=False, help="Generates a transparent PNG (needs kaleido)")
+
+    if grid is None:
+        st.info("OVATION JSON unavailable for basemap right now.")
+    else:
+        lon_min, lon_max = 140, 190
+        lat_min, lat_max = -60, -20
+
+        lat_mask = (lats >= lat_min) & (lats <= lat_max)
+        lon_mask = (lons >= lon_min) & (lons <= lon_max)
+        sub = grid[lat_mask][:, lon_mask]
+        sub_lats = lats[lat_mask]
+        sub_lons = lons[lon_mask]
+
+        clip_min2 = clip_min if "clip_min" in locals() else 5
+        z = np.where(sub >= clip_min2, sub, np.nan)
+
+        LON, LAT = np.meshgrid(sub_lons, sub_lats)
+        LON180 = np.where(LON > 180, LON - 360, LON)
+
+        mask = np.isfinite(z)
+        lon_pts = LON180[mask][::thin]
+        lat_pts = LAT[mask][::thin]
+        val_pts = z[mask][::thin]
+
+        fig_geo = go.Figure()
+        fig_geo.add_trace(go.Scattergeo(
+            lon=lon_pts,
+            lat=lat_pts,
+            mode="markers",
+            marker=dict(
+                size=4,
+                color=val_pts,
+                cmin=0, cmax=100,
+                colorscale="Turbo",
+                colorbar=dict(title="Aurora %")
+            ),
+            hovertemplate="Lon %{lon:.1f}°, Lat %{lat:.1f}°<br>%{marker.color:.0f}%<extra></extra>",
+            name="OVATION"
+        ))
+
+        fig_geo.update_layout(
+            title=f"NZ / South Pacific basemap — valid {ts or 'latest'} UTC",
+            height=520,
+            margin=dict(l=10, r=10, t=40, b=10),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            geo=dict(
+                projection=dict(type="natural earth", rotation=dict(lon=174 if recenter else 0)),
+                lataxis=dict(range=[lat_min, lat_max]),
+                showcoastlines=True, coastlinecolor="#9ec5ff",
+                showland=True, landcolor="rgb(30,40,50)",
+                showocean=True, oceancolor="rgb(10,20,30)",
+                showcountries=True, countrycolor="rgba(255,255,255,0.35)",
+                bgcolor="rgba(0,0,0,0)"
+            )
+        )
+
+        st.plotly_chart(fig_geo, use_container_width=True)
+
+        if enable_export:
+            try:
+                import plotly.io as pio
+                png_bytes = pio.to_image(
+                    fig_geo, format="png", width=1200, height=700, scale=2, engine="kaleido"
+                )
+                st.download_button(
+                    "⬇️ Download NZ OVATION basemap (PNG)",
+                    data=png_bytes,
+                    file_name="ovation_nz_basemap.png",
+                    mime="image/png",
+                )
+                st.caption("PNG has a transparent background for clean placement in your PDF.")
+            except Exception as e:
+                st.warning(f"PNG export requires Kaleido. Install with: pip install -U kaleido  (error: {e})")
+
+    
+
+# ... [rest of file unchanged] ...
 
 
 
