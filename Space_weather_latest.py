@@ -1480,72 +1480,7 @@ with tab_aurora:
     else:
         st.info("No Dst data available for the selected range.")
         
-    # ---------- New Zealand twist (local time + city chips) ----------
-    from zoneinfo import ZoneInfo
-
-    def _approx_kp_from_k(k_val: int | float) -> float:
-        try:
-            return max(0.0, min(9.0, float(k_val)))
-        except Exception:
-            return 0.0
-
-    _latest_k = (k_series[-1]["k"] if k_series else None)
-    _est_kp   = _approx_kp_from_k(_latest_k) if _latest_k is not None else None
-
-    _now_nz = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Pacific/Auckland"))
-    _is_night_nz = _now_nz.hour >= 18 or _now_nz.hour < 6
-
-    _city_min_kp = [
-        ("Southland (Invercargill)", 5.0),
-        ("Otago (Dunedin)",           6.0),
-        ("Canterbury (Christchurch)", 6.0),
-        ("Wellington",                7.0),
-        ("Auckland",                  8.0),
-    ]
-
-    def _chip(label: str, tone: str) -> str:
-        color = {"ok":"#22c55e", "caution":"#f59e0b", "watch":"#ef4444"}[tone]
-        bg    = {"ok":"rgba(34,197,94,.12)", "caution":"rgba(245,158,11,.12)", "watch":"rgba(239,68,68,.12)"}[tone]
-        return f"<span style='display:inline-block;padding:.12rem .55rem;border-radius:999px;border:2px solid {color};background:{bg};font-weight:700;font-size:.85rem;color:{color};'>{label}</span>"
-
-    st.markdown("### New Zealand — Quick Look")
-
-    _kp_txt = f"~Kp≈{_est_kp:.1f}" if _est_kp is not None else "Kp n/a"
-    _k_txt  = f"K={_latest_k}" if _latest_k is not None else "K n/a"
-    _night  = "Night" if _is_night_nz else "Day"
-
-    st.markdown(
-        f"<div style='display:flex;gap:.6rem;flex-wrap:wrap;'>"
-        f"{_chip('NZT: ' + _now_nz.strftime('%Y-%m-%d %H:%M'), 'ok')}"
-        f"{_chip(_night, 'caution' if not _is_night_nz else 'ok')}"
-        f"{_chip(_k_txt, 'ok')}"
-        f"{_chip(_kp_txt, 'ok')}"
-        f"</div>",
-        unsafe_allow_html=True
-    )
-
-    chips = []
-    for name, kp_min in _city_min_kp:
-        if _est_kp is None:
-            chips.append(_chip(f"{name}: needs Kp≥{kp_min:.0f}", "caution"))
-        else:
-            if _est_kp >= kp_min and _is_night_nz:
-                chips.append(_chip(f"{name}: Now (Kp≥{kp_min:.0f})", "ok"))
-            elif _est_kp >= kp_min and not _is_night_nz:
-                chips.append(_chip(f"{name}: Nighttime (Kp≥{kp_min:.0f})", "caution"))
-            else:
-                chips.append(_chip(f"{name}: Kp≥{kp_min:.0f}", "watch"))
-
-    st.markdown(
-        "<div style='margin-top:.5rem;display:flex;gap:.45rem;flex-wrap:wrap;'>"
-        + "".join(chips) +
-        "</div>",
-        unsafe_allow_html=True
-    )
-
-    st.caption("Heuristic guide only: thresholds are approximate and assume clear skies + dark conditions.")    
-
-    # ---------- NOAA OVATION (official) ----------
+        # ---------- NOAA OVATION (official) ----------
     st.markdown("### NOAA OVATION — 30-Minute Forecast (official)")
 
     @st.cache_data(ttl=300)
@@ -2183,3 +2118,4 @@ with tab_help:
 st.caption(f"Server time: {last_updated()}  •  Refresh page to update feeds.")
 
 #51585962-2fdd-4cf5-9d9e-74cdd09e3bab
+
