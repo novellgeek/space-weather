@@ -609,6 +609,7 @@ tab_overview, tab_charts, tab_forecast, tab_aurora, tab_expert, tab_pdf, tab_hel
 # ========== Overview Tab ==========
 # ========== Overview Tab ==========
 with tab_overview:
+    st.markdown("## Space Weather Dashboard - Overview")
     st.markdown("""
 <style>
   /* Match Forecast tab pill style exactly */
@@ -1480,7 +1481,9 @@ with tab_aurora:
     else:
         st.info("No Dst data available for the selected range.")
         
-        # ---------- NOAA OVATION (official) ----------
+  
+
+    # ---------- NOAA OVATION (official) ----------
     st.markdown("### NOAA OVATION — 30-Minute Forecast (official)")
 
     @st.cache_data(ttl=300)
@@ -2118,4 +2121,3 @@ with tab_help:
 st.caption(f"Server time: {last_updated()}  •  Refresh page to update feeds.")
 
 #51585962-2fdd-4cf5-9d9e-74cdd09e3bab
-
