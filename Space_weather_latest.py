@@ -1603,7 +1603,7 @@ with tab_aurora:
         bg    = {"ok":"rgba(34,197,94,.12)", "caution":"rgba(245,158,11,.12)", "watch":"rgba(239,68,68,.12)"}[tone]
         return f"<span style='display:inline-block;padding:.12rem .55rem;border-radius:999px;border:2px solid {color};background:{bg};font-weight:700;font-size:.85rem;color:{color};'>{label}</span>"
 
-    st.markdown("### New Zealand — Quick Look")
+    st.markdown("### New Zealand — Auroa Visability")
 
     _kp_txt = f"~Kp≈{_est_kp:.1f}" if _est_kp is not None else "Kp n/a"
     _k_txt  = f"K={_latest_k}" if _latest_k is not None else "K n/a"
@@ -2121,3 +2121,4 @@ with tab_help:
 st.caption(f"Server time: {last_updated()}  •  Refresh page to update feeds.")
 
 #51585962-2fdd-4cf5-9d9e-74cdd09e3bab
+
