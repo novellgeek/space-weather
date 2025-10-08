@@ -90,7 +90,7 @@ def last_updated():
 
 # ---------- NZ-flavoured, plain-English rewrite helpers ----------
 _NZ_REGIONAL_HINT = (
-    " (NZ/South Pacific focus)"
+   " "
 )
 
 def _any(txt: str, *phrases) -> bool:
@@ -736,7 +736,7 @@ with tab_overview:
         f"<div class='grid-bom'>{past_html}{curr_html}{d1_html}{d2_html}{d3_html}</div>",
         unsafe_allow_html=True
     )
-    st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
+    st.caption(f"Last updated from NOAA: {last_updated()} · Source: {src_note}")
 
     # ----------------- helpers to pull NOAA 24h text robustly -----------------
     def _clean_noaa_lines(txt: str) -> str:
@@ -803,7 +803,7 @@ with tab_overview:
     st.markdown("### New Zealand Plain-English Summaries")
     c1, c2, c3 = st.columns(3)
 
-    FOOTER_NZ = "\n\n**I have Spoken**"
+    FOOTER_NZ = "\n\n**This Is the Way**"
 
     with c1:
         st.markdown("#### Solar Activity (NZ)")
@@ -813,6 +813,8 @@ with tab_overview:
             + FOOTER_NZ
         )
 
+    st.caption(f"Last updated from NOAA: {last_updated()} · Source: {src_note}")
+
     with c2:
         st.markdown("#### Solar Wind (NZ)")
         st.info(
@@ -821,6 +823,8 @@ with tab_overview:
             + FOOTER_NZ
         )
 
+      #st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
+
     with c3:
         st.markdown("#### Geospace (NZ)")
         st.info(
@@ -828,6 +832,7 @@ with tab_overview:
                           r_now=current['r'], s_now=current['s'], g_now=current['g'], day1=day1)
             + FOOTER_NZ
         )
+       # st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
     # ----------------- 1) IMPACT (Next 24 h) — unchanged layout -----------------
     levels = _impact_level(current, day1)
     st.markdown("### Impact (Next 24 h)")
@@ -858,11 +863,12 @@ with tab_overview:
     with c3:
         st.markdown("**Geospace — 24 hr Summary**")
         st.markdown(gs_full.replace("\n", "<br>"), unsafe_allow_html=True)
-
+    st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
 
 # ========== Charts Tab ==========
 with tab_charts:
     st.markdown("## Space Weather Analytics (NOAA Style)")
+    st.caption(f"Last updated: {last_updated()} · Source: NOAA")
 
     time_ranges = {
         "6 Hour": 72,
@@ -1161,7 +1167,7 @@ with tab_forecast:
         """,
         unsafe_allow_html=True
     )
-    st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
+    st.caption(f"Last updated from NOAA: {last_updated()} · Source: {src_note}")
 
     # ---------- Severity pill tone mapping ----------
     def _tone_from_label(label_text: str) -> str:
@@ -1257,7 +1263,7 @@ with tab_forecast:
         """,
         unsafe_allow_html=True
     )
-    st.caption(f"Last updated: {last_updated()} · Source: {src_note}")
+    st.caption(f"Last updated from NOAA: {last_updated()} · Source: {src_note}")
 
     # ---------- NOAA detailed narrative (boxed) ----------
     st.markdown("<div style='height:1rem;'></div>", unsafe_allow_html=True)
@@ -1603,7 +1609,7 @@ with tab_aurora:
         bg    = {"ok":"rgba(34,197,94,.12)", "caution":"rgba(245,158,11,.12)", "watch":"rgba(239,68,68,.12)"}[tone]
         return f"<span style='display:inline-block;padding:.12rem .55rem;border-radius:999px;border:2px solid {color};background:{bg};font-weight:700;font-size:.85rem;color:{color};'>{label}</span>"
 
-    st.markdown("### New Zealand — Auroa Visability")
+    st.markdown("### New Zealand — Aurora Visability")
 
     _kp_txt = f"~Kp≈{_est_kp:.1f}" if _est_kp is not None else "Kp n/a"
     _k_txt  = f"K={_latest_k}" if _latest_k is not None else "K n/a"
@@ -2121,4 +2127,3 @@ with tab_help:
 st.caption(f"Server time: {last_updated()}  •  Refresh page to update feeds.")
 
 #51585962-2fdd-4cf5-9d9e-74cdd09e3bab
-
